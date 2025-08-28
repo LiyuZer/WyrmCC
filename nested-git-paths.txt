@@ -1,0 +1,8 @@
+crates/backend/.git
+crates/driver/.git
+crates/ir/.git
+crates/lex/.git
+crates/parse/.git
+crates/pp/.git
+crates/runtime/.git
+crates/sema/.git

@@ -1,0 +1,40 @@
+use crate::token::Keyword;
+
+pub fn to_keyword(s: &str) -> Option<Keyword> {
+    use Keyword::*;
+    Some(match s {
+        "auto" => Auto,
+        "break" => Break,
+        "case" => Case,
+        "char" => Char,
+        "const" => Const,
+        "continue" => Continue,
+        "default" => Default,
+        "do" => Do,
+        "double" => Double,
+        "else" => Else,
+        "enum" => Enum,
+        "extern" => Extern,
+        "float" => Float,
+        "for" => For,
+        "goto" => Goto,
+        "if" => If,
+        "int" => Int,
+        "long" => Long,
+        "register" => Register,
+        "return" => Return,
+        "short" => Short,
+        "signed" => Signed,
+        "sizeof" => Sizeof,
+        "static" => Static,
+        "struct" => Struct,
+        "switch" => Switch,
+        "typedef" => Typedef,
+        "union" => Union,
+        "unsigned" => Unsigned,
+        "void" => Void,
+        "volatile" => Volatile,
+        "while" => While,
+        _ => return None,
+    })
+}

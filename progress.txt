@@ -1,0 +1,110 @@
+WyrmCC C89 Compiler – Progress Summary
+
+Current status
+- All workspace tests pass under a guarded run: cargo test --workspace -- --nocapture --test-threads=1 (run with a global timeout in CI/use).
+- Prior hang root cause: unsafe constant folding inside loops. Fixed by disabling const folding within loops and correcting loop context; pointer stores now invalidate const caches. Guarded by regressions.
+- Repo hygiene: removed nested .git directories under crates/ (single VCS root). Backup archive kept locally.
+- New since last update: multi-translation-unit linking basics implemented and tested (cross-TU function calls and extern globals); globals emission for int, zero-init, and pointer-to-string forms working with sema constant-expression checks; struct/union member access (dot/arrow) backed by computed layouts; backend call lowering declares externs only when needed; lightweight IR text verifier added and covered by tests.
+- Current focus: struct/union/enum codegen and layout tightening (size/align/offset parity, field access) with expanded tests; then usual arithmetic conversions/promotions; broader arrays/decay contexts; variadics; and preprocessor conditionals and function-like macros.
+
+What’s implemented and covered by tests today
+Driver/CLI
+- Build, run, and link small programs end-to-end.
+- Emits assembly (-S), compile-only objects (-c), and links executables (using -no-pie on Linux). CLI help works.
+
+Lexer (lex)
+- Identifiers; keywords (if/else/while/for/do/return, typedef, struct/union/enum, sizeof, switch/case/default, etc.).
+- Punctuators/operators (++, --, compound assigns, shifts, bitwise, logical ops, comma).
+- Literals: integers, chars (escapes incl. hex/octal), strings with escapes.
+
+Parser (parse)
+- Declarations: int and pointer types, typedefs, parameter lists (including void parameter list).
+- Control flow: if/else, while, do-while, for, break, continue; switch with case/default labels and fallthrough.
+- Expressions: assignments (including compound), logical &&/||/!, calls, address-of (&) and dereference (*), indexing [], conditional operator (?:), comma operator, casts, sizeof(type)/sizeof(expr).
+- Syntax for struct/union/enum (parsing present; codegen separately tracked below).
+- Function prototypes (extern int f(int x);) parsed.
+
+Sema (sema)
+- sizeof for int and pointer types; basic alignment checks; arrays sizeof/align consistent with target assumptions.
+- Address/deref validation; pointer arithmetic basics; TU sanity checks.
+- Switch validations: integer condition; case labels must be integer constants (literal-only for now); unique case values; at most one default.
+- do-while: condition type-checked; body checked like while/for.
+- Globals/initializers: constant-expression checking for simple statics (integer constants and pointer-to-string forms); rejects non-constant initializers.
+- Record layout (struct/union) computation used by backend; basic enum value computation.
+
+IR utilities (ir)
+- IR builder and a lightweight text verifier (backend::verify_llvm_text): detects invalid CFG patterns (multiple terminators, missing terminators, branches to undefined labels, instructions after terminators). Covered by tests.
+
+Backend codegen (backend)
+- Locals: allocas, loads/stores; integer arithmetic (+, -, *), shifts, bitwise ops, comparisons.
+- Control flow: if/else; while/for loops; do-while (at-least-once semantics); switch/case/default dispatch with explicit fallthrough and break; correct loop structure and branch targets.
+- Conditional operator (?:) lowered via branching to then/else blocks with a joined result slot.
+- Comma operator sequencing: evaluates LHS for side effects, yields RHS value.
+- Function parameters and calls; special-cased puts for string pointers; emits external declares for calls only when not already defined.
+- Pointers: address-of, deref, load/store through pointers; aliasing invalidates constant cache.
+- ++/-- (pre/post) for identifiers and pointer dereferences; several compound assignments lowered.
+- Arrays: local [N x i32] allocas and indexing; array identifiers decay to pointers in rvalue contexts; pointer arithmetic (+/- int) via GEP; sizeof(array) uses declared type (no decay); sizeof(expr) refined.
+- Casts: basic int<->ptr (inttoptr/ptrtoint) and ptr->ptr (bitcast) lowering heuristics.
+- Strings: global string emission, GEP indexing fixed, correct escaping; puts call emission works.
+- Members: struct/union member access via dot/arrow using precomputed record layouts; union overlay accesses use offset-0 GEP.
+- Globals: emission for i32, zero-initialized, and pointer-to-string globals.
+
+Regression and run-time tests (representative)
+- IR-shape tests for conditionals, loops (while/for/do-while), inc/dec, assign-ops, pointers, strings, switch dispatch/fallthrough/break, comma, and conditional operator.
+- Arrays tests: local arrays, indexing, array-to-pointer decay, sizeof(array) vs sizeof(pointer), pointer arithmetic via GEP.
+- Casts tests: int<->ptr and ptr->ptr IR patterns.
+- Members tests: struct dot/arrow load/store; basic union overlay.
+- Globals tests: int emission, pointer-to-string global, and zero-init.
+- Multi-TU tests: compile two TUs, link, and run; extern globals treated as external; cross-TU calls succeed.
+- Verifier tests: invalid CFG patterns flagged by backend::verify_llvm_text.
+- Run tests: arithmetic, control flow, params, pointers, puts; explicit infinite-loop timeout test.
+- Parser coverage: control flow (incl. do-while and switch), declarations/typedefs, pointers, structs/unions/enums syntax, sizeof, calls, casts, comma, arrays/indexing, prototypes.
+- Lexer coverage: keywords, control-flow tokens, literals and escapes.
+
+What remains for a fully functioning C89 compiler
+Control flow
+- goto and labels: label resolution, safe terminator placement, forward/backward jumps.
+
+Expressions and conversions
+- Casts and integer promotions/usual arithmetic conversions (signed/unsigned paths; trunc/zext/sext rules); pointer-int cast rules beyond current basics.
+
+Types, storage, and aggregates
+- Storage classes/linkage: static, extern, internal vs external linkage; static locals; cross-TU resolution.
+- Qualifiers: const (enforce no modification), basic volatile semantics (volatile loads/stores in IR).
+- Arrays and pointer decay in additional contexts; multi-dimensional arrays; generalized GEP-based codegen and element types beyond i32.
+- Struct/union/enum codegen and layout using target DataLayout; field access and alignment; enum constant evaluation.
+- Globals and initializers: extend constant expression evaluation for static storage (beyond current literals/string-pointer forms); strings/arrays/pointers in complex initializers.
+- Tentative definitions and common symbols; one-definition rules across TUs.
+
+Functions and ABI
+- Variadic functions (calls and definitions; printf smoke tests).
+- K&R (old-style) function definitions and interactions with prototypes.
+- Returning aggregates per target ABI (small struct returns).
+- Target/ABI fidelity: default calling convention = C, sizeof/align parity with system toolchain; record layout parity checks.
+
+Preprocessor completeness
+- #include search paths; object-like and function-like macros; #undef; line continuations.
+- Conditionals: #if/#elif/#else/#endif, #ifdef/#ifndef, defined(), integer constant expression eval.
+- Operators: stringification (#) and token pasting (##). Include cycle handling and header guards.
+
+Driver and tooling
+- Full flag surface: -E, -S, -c, -o, -I, -D, -U, -L, -l, -O0, -g; target triple and DataLayout plumbed through.
+- CI matrix (Linux/macOS), fuzzing for lexer/parser, coverage reports. Guarded test runs with timeouts in CI.
+
+Guardrails to prevent regressions/infinite loops
+- Keep loop-const-folding disabled in hot loops; maintain regression tests for while/for/do-while non-const-folding.
+- Ensure pointer stores invalidate constant caches; add property tests for loop progress.
+- Continue running tests with single-thread and global timeout in CI.
+
+Near-term milestone order
+1) Struct/union/enum codegen and layout (+ tests)
+2) Usual arithmetic conversions and promotions (+ tests)
+3) Arrays + pointer decay in broader contexts (+ tests)
+4) Variadic functions (+ tests)
+5) Preprocessor conditionals and function-like macros (+ tests)
+6) Driver feature parity/flags (+ tests)
+7) CI, fuzzing, and coverage
+
+Notes
+- Multi-TU linking basics and basic globals emission are in place; extend constant-expression coverage for static storage in a later pass.
+- Member access for records is functional for basic cases; arrays-of-structs, typed GEP scaling, and ABI-related struct returns are intentionally deferred.

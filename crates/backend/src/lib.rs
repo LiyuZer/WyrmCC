@@ -858,9 +858,15 @@ impl Emitter {
                     UnaryOp::AddrOf => {
                         match &**expr {
                             Expr::Ident(name) => {
-                                if let Some(ptr) = self.locals.get(name).cloned() { (ptr, None) }
-                                else if self.global_types.contains_key(name) { (format!("@{}", name), None) }
-                                else { ("0".to_string(), Some(0)) }
+                                if let Some(ptr) = self.locals.get(name).cloned() {
+                                    (ptr, None)
+                                } else if self.global_types.contains_key(name) {
+                                    // Known global/function symbol
+                                    (format!("@{}", name), None)
+                                } else {
+                                    // Assume function symbol if not a local or known global
+                                    (format!("@{}", name), None)
+                                }
                             }
                             Expr::Member { base, field, arrow } => {
                                 let (p, _fty) = self.emit_member_ptr(base, field, *arrow);
@@ -874,13 +880,27 @@ impl Emitter {
                         }
                     }
                     UnaryOp::Deref => {
-                        let (pstr, _pc) = self.emit_expr(expr);
-                        let tmp = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = load i32, ptr {}", tmp, pstr);
-                        (tmp, None)
+                        // Special-case *(&func) -> @func (no load)
+                        if let Expr::Unary { op: UnaryOp::AddrOf, expr: inner } = &**expr {
+                            if let Expr::Ident(name) = &**inner {
+                                (format!("@{}", name), None)
+                            } else {
+                                let (pstr, _pc) = self.emit_expr(expr);
+                                let tmp = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = load i32, ptr {}", tmp, pstr);
+                                (tmp, None)
+                            }
+                        } else {
+                            let (pstr, _pc) = self.emit_expr(expr);
+                            let tmp = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = load i32, ptr {}", tmp, pstr);
+                            (tmp, None)
+                        }
                     }
                 }
-            }
+            },
+
+            // Binary operations (pointer arithmetic, subtraction, integer ops, comparisons, logical)
             Expr::Binary { op, lhs, rhs } => {
                 // Pointer arithmetic via GEP when mixing ptr and int for +/-
                 if matches!(op, BinaryOp::Plus | BinaryOp::Minus) {

@@ -261,7 +261,7 @@ impl Parser {
         loop {
             match self.peek_kind() {
                 Some(K::Punct(P::LParen)) => {
-                    let callee = match e { Expr::Ident(ref name) => name.clone(), _ => break };
+                    // Function call: ident(...) -> Expr::Call; otherwise treat as function-pointer call Expr::CallPtr
                     self.pos += 1; // '('
                     let mut args = Vec::new();
                     if !self.consume_punct(P::RParen) {
@@ -273,7 +273,16 @@ impl Parser {
                             break;
                         }
                     }
-                    e = Expr::Call { callee, args };
+                    let e_new = match e {
+                        Expr::Ident(ref name) => {
+                            let callee = name.clone();
+                            Expr::Call { callee, args }
+                        }
+                        other => {
+                            Expr::CallPtr { target: Box::new(other), args }
+                        }
+                    };
+                    e = e_new;
                 }
                 Some(K::Punct(P::Inc)) => { self.pos += 1; e = Expr::IncDec { pre: false, inc: true,  target: Box::new(e) }; }
                 Some(K::Punct(P::Dec)) => { self.pos += 1; e = Expr::IncDec { pre: false, inc: false, target: Box::new(e) }; }

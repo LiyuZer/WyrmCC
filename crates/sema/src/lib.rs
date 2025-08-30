@@ -557,10 +557,15 @@ impl Sema {
     fn type_expr(&mut self, e: &Expr) -> Result<Type> {
         match e {
             Expr::Ident(name) => {
-                self.lookup(name).ok_or_else(|| anyhow!("use of undeclared identifier: {}", name))
+                if let Some(t) = self.lookup(name) { return Ok(t); }
+                if let Some((ret, params, variadic)) = self.func_sigs.get(name).cloned() {
+                    // Function designator: treat identifier as a function type
+                    return Ok(Type::Func { ret: Box::new(ret), params, variadic });
+                }
+                Err(anyhow!("use of undeclared identifier: {}", name))
             }
             Expr::IntLiteral(_) => Ok(Type::Int),
-            Expr::StringLiteral(_) => Ok(Type::Pointer(Box::new(Type::Int))), // char* approximated as int*
+            Expr::StringLiteral(_) => Ok(Type::Pointer(Box::new(Type::Int))), // char*
 
             Expr::Unary { op, expr } => {
                 let t = self.type_expr(expr)?;
@@ -690,46 +695,52 @@ impl Sema {
                     Ok(ret_t)
                 } else {
                     // Unknown extern: be permissive, type-check args only
-                    for a in args { let _ = self.type_expr(a)?; }
+                    for a in args {
+                        let _ = self.type_expr(a)?;
+                    }
                     Ok(Type::Int)
                 }
             }
 
             Expr::CallPtr { target, args } => {
-                // Indirect call via function pointer
+                // Indirect call via function pointer or function designator
                 let t_callee = self.type_expr(target)?;
                 let t_callee = self.resolve_type(&t_callee)?;
+                // Helper to check args against a function type and return its ret type
+                let mut check_fn = |ret: Box<Type>, params: Vec<Type>, variadic: bool| -> Result<Type> {
+                    if !variadic && args.len() != params.len() {
+                        return Err(anyhow!(
+                            "arity mismatch in indirect call: expected {}, got {}",
+                            params.len(), args.len()
+                        ));
+                    }
+                    if variadic && args.len() < params.len() {
+                        return Err(anyhow!(
+                            "too few arguments in indirect call: expected at least {}, got {}",
+                            params.len(), args.len()
+                        ));
+                    }
+                    for (i, pty) in params.iter().enumerate() {
+                        let aty = self.type_expr(&args[i])?;
+                        if !self.type_compatible_for_param(pty, &aty)? {
+                            let rpt = self.resolve_type(pty)?;
+                            let rat = self.resolve_type(&aty)?;
+                            return Err(anyhow!(
+                                "type mismatch for argument {} in indirect call: expected {:?}, got {:?}",
+                                i+1, rpt, rat
+                            ));
+                        }
+                    }
+                    for a in args.iter().skip(params.len()) { let _ = self.type_expr(a)?; }
+                    Ok(*ret)
+                };
+
                 match t_callee {
                     Type::Pointer(inner) => match *inner {
-                        Type::Func { ret, params, variadic } => {
-                            if !variadic && args.len() != params.len() {
-                                return Err(anyhow!(
-                                    "arity mismatch in indirect call: expected {}, got {}",
-                                    params.len(), args.len()
-                                ));
-                            }
-                            if variadic && args.len() < params.len() {
-                                return Err(anyhow!(
-                                    "too few arguments in indirect call: expected at least {}, got {}",
-                                    params.len(), args.len()
-                                ));
-                            }
-                            for (i, pty) in params.iter().enumerate() {
-                                let aty = self.type_expr(&args[i])?;
-                                if !self.type_compatible_for_param(pty, &aty)? {
-                                    let rpt = self.resolve_type(pty)?;
-                                    let rat = self.resolve_type(&aty)?;
-                                    return Err(anyhow!(
-                                        "type mismatch for argument {} in indirect call: expected {:?}, got {:?}",
-                                        i+1, rpt, rat
-                                    ));
-                                }
-                            }
-                            for a in args.iter().skip(params.len()) { let _ = self.type_expr(a)?; }
-                            Ok(*ret)
-                        }
+                        Type::Func { ret, params, variadic } => check_fn(ret, params, variadic),
                         other => Err(anyhow!("call through non-function pointer: {:?}", other)),
                     },
+                    Type::Func { ret, params, variadic } => check_fn(ret, params, variadic),
                     other => Err(anyhow!("call through non-pointer expression: {:?}", other)),
                 }
             }

@@ -614,6 +614,10 @@ impl Parser {
             let items = self.parse_block()?;
             return Ok(Stmt::Block(items));
         }
+        // Empty statement ';'
+        if self.consume_punct(P::Semicolon) {
+            return Ok(Stmt::ExprStmt(Expr::IntLiteral("0".to_string())));
+        }
 
         // Label: IDENT ':' at start of a statement
         if let (Some(K::Identifier(_)), Some(K::Punct(P::Colon))) = (self.peek_kind(), self.peek_kind_n(1)) {
@@ -864,9 +868,11 @@ impl Parser {
         while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
 
         // Handle tag-only declarations like 'struct S;'
-        if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) { return Ok(()); }
+        if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) {
+            return Ok(());
+        }
 
-        // Support global function-pointer declarator: T (*name)(params);
+        // Support global function-pointer declarator: T (*name)(params) [= init];
         if self.consume_punct(P::LParen) {
             self.expect_punct(P::Star)?;
             let name = self.expect_ident()?;
@@ -874,19 +880,35 @@ impl Parser {
             self.expect_punct(P::LParen)?;
             let (param_types, variadic) = self.parse_param_types_list()?;
             let decl_ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
+            // Optional initializer, e.g., int (*fp)(int) = f;
+            let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
             self.expect_punct(P::Semicolon)?;
-            globals.push(Global { name, ty: decl_ty, init: None, storage, quals });
+            globals.push(Global { name, ty: decl_ty, init, storage, quals });
             return Ok(());
         }
 
+        // Otherwise expect an identifier name
         let name = self.expect_ident()?;
 
         // Function definition or prototype if next is '('
         if let Some(K::Punct(P::LParen)) = self.peek_kind() {
-            // Parse parameter list
             self.pos += 1; // '('
+            let save_after_lparen = self.pos;
+            // Try unnamed parameter-type list for prototypes like: int f(int);
+            if let Ok((_param_types_only, _variadic_only)) = self.parse_param_types_list() {
+                if self.consume_punct(P::Semicolon) {
+                    // Prototype without parameter names
+                    return Ok(());
+                } else {
+                    // Not a prototype-only; restore and parse named param list
+                    self.pos = save_after_lparen;
+                }
+            } else {
+                // Restore and try named parameter list
+                self.pos = save_after_lparen;
+            }
             let (params, variadic) = self.parse_params()?; // consumes ')'
-            // If followed by ';' -> function prototype declaration (no body)
+            // If followed by ';' -> function prototype declaration (with names)
             if self.consume_punct(P::Semicolon) { return Ok(()); }
             // Otherwise expect a function body
             let body = self.parse_block()?;
@@ -895,14 +917,19 @@ impl Parser {
             return Ok(());
         }
 
-        // Optional array declarator
+        // Optional array declarators for global variable: T a[10][2];
         if self.consume_punct(P::LBracket) {
-            let sz = match self.peek_kind() {
-                Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
-                other => bail!("expected integer literal array size, got {:?}", other),
-            };
-            self.expect_punct(P::RBracket)?;
-            ty = Type::Array(Box::new(ty), sz);
+            let mut sizes: Vec<usize> = Vec::new();
+            loop {
+                let sz = match self.peek_kind() {
+                    Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                    other => bail!("expected integer literal array size, got {:?}", other),
+                };
+                self.expect_punct(P::RBracket)?;
+                sizes.push(sz);
+                if !self.consume_punct(P::LBracket) { break; }
+            }
+            for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
         }
 
         // Optional initializer
@@ -924,7 +951,6 @@ impl Parser {
         Ok(TranslationUnit { functions, records: self.records.clone(), enums: self.enums.clone(), globals })
     }
 }
-
 fn decode_char_literal(repr: &str) -> i32 {
     let bytes = repr.as_bytes();
     if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
@@ -972,7 +998,6 @@ fn decode_char_literal(repr: &str) -> i32 {
         } else { 0 }
     } else { 0 }
 }
-
 pub fn parse_translation_unit(src: &str) -> Result<TranslationUnit> {
     let mut p = Parser::from_source(src);
     p.parse_translation_unit().context("failed to parse translation unit")

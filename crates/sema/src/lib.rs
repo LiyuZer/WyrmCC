@@ -662,8 +662,49 @@ impl Sema {
             }
 
             Expr::Call { callee, args } => {
+                // If callee is a variable in scope with a function pointer/function type,
+                // treat this as an indirect call and perform full arity/type checks.
+                if let Some(vt) = self.lookup(callee) {
+                    let t_callee = self.resolve_type(&vt)?;
+                    let mut check_fn = |ret: Box<Type>, params: Vec<Type>, variadic: bool| -> Result<Type> {
+                        if !variadic && args.len() != params.len() {
+                            return Err(anyhow!(
+                                "arity mismatch in indirect call: expected {}, got {}",
+                                params.len(), args.len()
+                            ));
+                        }
+                        if variadic && args.len() < params.len() {
+                            return Err(anyhow!(
+                                "too few arguments in indirect call: expected at least {}, got {}",
+                                params.len(), args.len()
+                            ));
+                        }
+                        for (i, pty) in params.iter().enumerate() {
+                            let aty = self.type_expr(&args[i])?;
+                            if !self.type_compatible_for_param(pty, &aty)? {
+                                let rpt = self.resolve_type(pty)?;
+                                let rat = self.resolve_type(&aty)?;
+                                return Err(anyhow!(
+                                    "type mismatch for argument {} in indirect call: expected {:?}, got {:?}",
+                                    i+1, rpt, rat
+                                ));
+                            }
+                        }
+                        for a in args.iter().skip(params.len()) { let _ = self.type_expr(a)?; }
+                        Ok(*ret)
+                    };
+                    match t_callee {
+                        Type::Pointer(inner) => match *inner {
+                            Type::Func { ret, params, variadic } => return check_fn(ret, params, variadic),
+                            _ => {}
+                        },
+                        Type::Func { ret, params, variadic } => return check_fn(ret, params, variadic),
+                        _ => {}
+                    }
+                }
+
                 if let Some((ret_t, params, variadic)) = self.func_sigs.get(callee).cloned() {
-                    // Arity checks
+                    // Arity checks for known function symbols
                     if !variadic && args.len() != params.len() {
                         return Err(anyhow!(
                             "arity mismatch in call to {}: expected {}, got {}",
@@ -695,9 +736,7 @@ impl Sema {
                     Ok(ret_t)
                 } else {
                     // Unknown extern: be permissive, type-check args only
-                    for a in args {
-                        let _ = self.type_expr(a)?;
-                    }
+                    for a in args { let _ = self.type_expr(a)?; }
                     Ok(Type::Int)
                 }
             }

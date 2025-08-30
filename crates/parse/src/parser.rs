@@ -9,7 +9,7 @@ pub struct Parser {
     pos: usize,
     // Scoped typedef-name tracking: each block introduces a new scope
     typedef_scopes: Vec<HashSet<String>>, // stack of typedef-names
-    // New: accumulate record and enum definitions encountered while parsing types
+    // Accumulate record and enum definitions encountered while parsing types
     records: Vec<RecordDef>,
     enums: Vec<EnumDef>,
 }
@@ -21,7 +21,13 @@ impl Parser {
         while let Some(t) = lx.next_token() {
             toks.push(t);
         }
-        Self { toks, pos: 0, typedef_scopes: vec![HashSet::new()], records: Vec::new(), enums: Vec::new() }
+        Self {
+            toks,
+            pos: 0,
+            typedef_scopes: vec![HashSet::new()],
+            records: Vec::new(),
+            enums: Vec::new(),
+        }
     }
 
     fn peek(&self) -> Option<&Token> { self.toks.get(self.pos) }
@@ -114,7 +120,6 @@ impl Parser {
         }
         if saw_any_int_spec {
             // Map C89 integer specifier combinations to precise kinds.
-            // Rules:
             // - 'char' with optional 'signed'/'unsigned'
             // - 'short' [int], 'long' [int]
             // - plain 'signed'/'unsigned' imply int
@@ -130,7 +135,6 @@ impl Parser {
                 let ty = if saw_unsigned { Type::ULong } else { Type::Long };
                 return Ok(ty);
             }
-            // Default: int family
             let ty = if saw_unsigned { Type::UInt } else { Type::Int };
             return Ok(ty);
         }
@@ -147,7 +151,6 @@ impl Parser {
                     self.expect_punct(P::Semicolon)?;
                     members_acc.push((mname, mty));
                 }
-                // Record the struct definition if there is a tag (empty tag allowed but less useful)
                 self.records.push(RecordDef { kind: RecordKind::Struct, tag: tag.clone(), members: members_acc });
             }
             return Ok(Type::Struct(tag));
@@ -202,17 +205,20 @@ impl Parser {
 
         bail!("expected type (int family, void, struct, union, enum, or typedef-name)")
     }
+
     fn parse_type_with_ptrs(&mut self) -> Result<Type> {
         let mut ty = self.parse_type()?;
         while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
         Ok(ty)
     }
+
+    // Named parameters list: (T name, ...)
     fn parse_params(&mut self) -> Result<(Vec<Param>, bool)> {
         // () or (void)
         if self.consume_punct(P::RParen) { return Ok((vec![], false)); }
         if self.consume_keyword(Kw::Void) { self.expect_punct(P::RParen)?; return Ok((vec![], false)); }
 
-        // Disallow leading ellipsis (must have at least one named parameter before ...)
+        // Disallow leading ellipsis
         if let Some(K::Punct(P::Ellipsis)) = self.peek_kind() { bail!("ellipsis requires at least one named parameter before it"); }
 
         let mut params = Vec::new();
@@ -223,26 +229,22 @@ impl Parser {
             let name = self.expect_ident()?;
             params.push(Param { name, ty });
 
-            // Comma: either another parameter or a trailing ellipsis
             if self.consume_punct(P::Comma) {
                 if let Some(K::Punct(P::Ellipsis)) = self.peek_kind() {
-                    // Trailing ellipsis must be last, require closing ')'
-                    self.pos += 1; // consume '...'
+                    self.pos += 1; // '...'
                     self.expect_punct(P::RParen)?;
                     variadic = true;
                     return Ok((params, variadic));
                 }
-                // Otherwise, continue parsing next named parameter
                 continue;
             }
-            // No comma: we must be at the closing ')'
             self.expect_punct(P::RParen)?;
             break;
         }
         Ok((params, variadic))
     }
 
-    // New: parse a parameter type list (without names) for declarators
+    // Parameter type list (no names): (T, T*, ...)
     fn parse_param_types_list(&mut self) -> Result<(Vec<Type>, bool)> {
         // () or (void)
         if self.consume_punct(P::RParen) { return Ok((vec![], false)); }
@@ -251,10 +253,8 @@ impl Parser {
         let mut params: Vec<Type> = Vec::new();
         let mut variadic = false;
         loop {
-            // Trailing ellipsis allowed after at least one param
             if let Some(K::Punct(P::Ellipsis)) = self.peek_kind() {
-                // consume '...'
-                self.pos += 1;
+                self.pos += 1; // '...'
                 self.expect_punct(P::RParen)?;
                 variadic = true;
                 return Ok((params, variadic));
@@ -263,9 +263,7 @@ impl Parser {
             while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
             params.push(ty);
 
-            if self.consume_punct(P::Comma) {
-                continue;
-            }
+            if self.consume_punct(P::Comma) { continue; }
             self.expect_punct(P::RParen)?;
             break;
         }
@@ -284,13 +282,12 @@ impl Parser {
         }
     }
 
-    // Postfix: calls ident(...), postfix ++/--, indexing expr[expr], member access expr.field / expr->field
+    // Postfix: calls, ++/--, indexing, member access
     fn parse_postfix(&mut self) -> Result<Expr> {
         let mut e = self.parse_primary_base()?;
         loop {
             match self.peek_kind() {
                 Some(K::Punct(P::LParen)) => {
-                    // Function call: ident(...) -> Expr::Call; otherwise treat as function-pointer call Expr::CallPtr
                     self.pos += 1; // '('
                     let mut args = Vec::new();
                     if !self.consume_punct(P::RParen) {
@@ -307,9 +304,7 @@ impl Parser {
                             let callee = name.clone();
                             Expr::Call { callee, args }
                         }
-                        other => {
-                            Expr::CallPtr { target: Box::new(other), args }
-                        }
+                        other => Expr::CallPtr { target: Box::new(other), args },
                     };
                     e = e_new;
                 }
@@ -608,6 +603,7 @@ impl Parser {
         self.pop_typedef_scope();
         Ok(items)
     }
+
     fn parse_stmt(&mut self) -> Result<Stmt> {
         // Nested block as a statement
         if let Some(K::Punct(P::LBrace)) = self.peek().map(|t| &t.kind) {
@@ -626,7 +622,7 @@ impl Parser {
             return Ok(Stmt::Label(name));
         }
 
-        // Goto statement
+        // Goto
         if self.consume_keyword(Kw::Goto) {
             let name = self.expect_ident()?;
             self.expect_punct(P::Semicolon)?;
@@ -643,11 +639,14 @@ impl Parser {
             return Ok(Stmt::Continue);
         }
 
+        // Return
         if self.consume_keyword(Kw::Return) {
             let e = self.parse_expr()?;
             self.expect_punct(P::Semicolon)?;
             return Ok(Stmt::Return(e));
         }
+
+        // If/Else
         if self.consume_keyword(Kw::If) {
             self.expect_punct(P::LParen)?;
             let cond = self.parse_expr()?;
@@ -656,6 +655,8 @@ impl Parser {
             let else_branch = if self.consume_keyword(Kw::Else) { Some(self.parse_stmt_or_block()?) } else { None };
             return Ok(Stmt::If { cond, then_branch, else_branch });
         }
+
+        // While
         if self.consume_keyword(Kw::While) {
             self.expect_punct(P::LParen)?;
             let cond = self.parse_expr()?;
@@ -663,6 +664,8 @@ impl Parser {
             let body = self.parse_stmt_or_block()?;
             return Ok(Stmt::While { cond, body });
         }
+
+        // Do-While
         if self.consume_keyword(Kw::Do) {
             let body = self.parse_stmt_or_block()?;
             if !self.consume_keyword(Kw::While) { bail!("expected 'while' after 'do' body"); }
@@ -673,38 +676,20 @@ impl Parser {
             return Ok(Stmt::DoWhile { body, cond });
         }
 
-        // For statement: for (init; cond; post) statement
+        // For (init; cond; post)
         if self.consume_keyword(Kw::For) {
             self.expect_punct(P::LParen)?;
-            // init: optional expression before first ';'
-            let init = if self.consume_punct(P::Semicolon) {
-                None
-            } else {
-                let e = self.parse_expr()?;
-                self.expect_punct(P::Semicolon)?;
-                Some(e)
-            };
-            // cond: optional expression before second ';'
-            let cond = if self.consume_punct(P::Semicolon) {
-                None
-            } else {
-                let e = self.parse_expr()?;
-                self.expect_punct(P::Semicolon)?;
-                Some(e)
-            };
-            // post: optional expression before ')'
-            let post = if self.consume_punct(P::RParen) {
-                None
-            } else {
-                let e = self.parse_expr()?;
-                self.expect_punct(P::RParen)?;
-                Some(e)
-            };
+            // init
+            let init = if self.consume_punct(P::Semicolon) { None } else { let e = self.parse_expr()?; self.expect_punct(P::Semicolon)?; Some(e) };
+            // cond
+            let cond = if self.consume_punct(P::Semicolon) { None } else { let e = self.parse_expr()?; self.expect_punct(P::Semicolon)?; Some(e) };
+            // post
+            let post = if self.consume_punct(P::RParen) { None } else { let e = self.parse_expr()?; self.expect_punct(P::RParen)?; Some(e) };
             let body = self.parse_stmt_or_block()?;
             return Ok(Stmt::For { init, cond, post, body });
         }
 
-        // Switch statement: switch (cond) { case/default ... }
+        // Switch
         if self.consume_keyword(Kw::Switch) {
             self.expect_punct(P::LParen)?;
             let cond = self.parse_expr()?;
@@ -713,11 +698,11 @@ impl Parser {
             return Ok(Stmt::Switch { cond, body });
         }
 
+        // Typedef (block-scope)
         if self.consume_keyword(Kw::Typedef) {
             let mut ty = self.parse_type()?;
             while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
-
-            // Support function-pointer typedef: typedef T (*Name)(param-types);
+            // typedef function-pointer: typedef T (*Name)(params);
             if self.consume_punct(P::LParen) {
                 self.expect_punct(P::Star)?;
                 let name = self.expect_ident()?;
@@ -730,9 +715,8 @@ impl Parser {
                 self.insert_typedef(name.clone());
                 return Ok(Stmt::Typedef { name, ty });
             }
-
+            // typedef arrays: typedef int A[10][2];
             let name = self.expect_ident()?;
-            // Optional array declarators for typedef name: typedef int A[10][2];
             if self.consume_punct(P::LBracket) {
                 let mut sizes: Vec<usize> = Vec::new();
                 loop {
@@ -750,8 +734,10 @@ impl Parser {
             self.insert_typedef(name.clone());
             return Ok(Stmt::Typedef { name, ty });
         }
+
+        // Local declarations and fallbacks
         let save = self.pos;
-        // Accumulate storage and qualifiers for local declarations
+        // Accumulate (and ignore for now) storage and qualifiers for local decls
         let mut storage: Option<Storage> = None;
         let mut quals = Qualifiers::none();
         loop {
@@ -768,8 +754,7 @@ impl Parser {
             if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) {
                 return Ok(Stmt::ExprStmt(Expr::IntLiteral("0".to_string())));
             }
-
-            // Local function-pointer declaration support: int (*fp)(...);
+            // Local function-pointer: T (*name)(params) [= init];
             if self.consume_punct(P::LParen) {
                 self.expect_punct(P::Star)?;
                 let name = self.expect_ident()?;
@@ -781,9 +766,8 @@ impl Parser {
                 self.expect_punct(P::Semicolon)?;
                 return Ok(Stmt::Decl { name, ty, init, storage, quals });
             }
-
+            // Arrays right-to-left folding
             let name = self.expect_ident()?;
-            // Support repeated array declarators a[...] [...]; build innermost first (right-to-left)
             if self.consume_punct(P::LBracket) {
                 let mut sizes: Vec<usize> = Vec::new();
                 loop {
@@ -795,22 +779,19 @@ impl Parser {
                     sizes.push(sz);
                     if !self.consume_punct(P::LBracket) { break; }
                 }
-                // Fold sizes from right to left to make the rightmost dimension the innermost
                 for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
             }
             let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
             self.expect_punct(P::Semicolon)?;
             return Ok(Stmt::Decl { name, ty, init, storage, quals });
         }
-        // Fallback: treat IDENTIFIER (with optional '*') IDENTIFIER as a declaration
-        // This allows parsing unknown typedef names (e.g., 'T x;') to be handled by sema.
+
+        // Fallback: IDENT ('*')* IDENT -> declaration with typedef-name unknown to parser
         let after_quals_pos = self.pos;
         if let Some(K::Identifier(_)) = self.peek_kind() {
-            // Lookahead: IDENTIFIER ('*')* IDENTIFIER -> plausible declaration
             let mut i = 1usize;
             while let Some(K::Punct(P::Star)) = self.peek_kind_n(i) { i += 1; }
             if matches!(self.peek_kind_n(i), Some(K::Identifier(_))) {
-                // Parse as declaration with Type::Named(first_identifier)
                 let tn = if let Some(K::Identifier(s)) = self.bump().map(|t| t.kind.clone()) { s } else { unreachable!() };
                 let mut ty = Type::Named(tn);
                 while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
@@ -832,25 +813,19 @@ impl Parser {
                 self.expect_punct(P::Semicolon)?;
                 return Ok(Stmt::Decl { name, ty, init, storage, quals });
             } else {
-                // Not a plausible declaration; restore to after qualifiers for expression parse
                 self.pos = after_quals_pos;
             }
         }
+
         self.pos = save;
         let e = self.parse_expr()?;
         self.expect_punct(P::Semicolon)?;
         Ok(Stmt::ExprStmt(e))
     }
-    fn parse_function(&mut self, ret_type: Type, name: String) -> Result<Function> {
-        self.expect_punct(P::LParen)?;
-        let (params, variadic) = self.parse_params()?;
-        let body = self.parse_block()?;
-        Ok(Function { name, ret_type, params, variadic, body, storage: None })
-    }
 
-    // New: parse a single top-level item (function definition or global declaration)
+    // Top-level item (function definition/prototype or global declaration)
     fn parse_top_level_item(&mut self, functions: &mut Vec<Function>, globals: &mut Vec<Global>) -> Result<()> {
-        // Consume optional storage-class specifiers and qualifiers
+        // storage/quals
         let mut storage: Option<Storage> = None;
         let mut quals = Qualifiers::none();
         loop {
@@ -867,57 +842,47 @@ impl Parser {
         let mut ty = self.parse_type()?;
         while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
 
-        // Handle tag-only declarations like 'struct S;'
+        // Tag-only decls: struct S;
         if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) {
             return Ok(());
         }
 
-        // Support global function-pointer declarator: T (*name)(params) [= init];
+        // Global function-pointer: T (*name)(params) [= init];
         if self.consume_punct(P::LParen) {
             self.expect_punct(P::Star)?;
             let name = self.expect_ident()?;
             self.expect_punct(P::RParen)?;
             self.expect_punct(P::LParen)?;
-            let (param_types, variadic) = self.parse_param_types_list()?;
+            let (param_types, variadic) = self.parse_param_types_list()?; // consumes ')'
             let decl_ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
-            // Optional initializer, e.g., int (*fp)(int) = f;
             let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
             self.expect_punct(P::Semicolon)?;
             globals.push(Global { name, ty: decl_ty, init, storage, quals });
             return Ok(());
         }
 
-        // Otherwise expect an identifier name
+        // Otherwise identifier
         let name = self.expect_ident()?;
 
-        // Function definition or prototype if next is '('
+        // Function prototype/definition
         if let Some(K::Punct(P::LParen)) = self.peek_kind() {
             self.pos += 1; // '('
             let save_after_lparen = self.pos;
-            // Try unnamed parameter-type list for prototypes like: int f(int);
             if let Ok((_param_types_only, _variadic_only)) = self.parse_param_types_list() {
-                if self.consume_punct(P::Semicolon) {
-                    // Prototype without parameter names
-                    return Ok(());
-                } else {
-                    // Not a prototype-only; restore and parse named param list
-                    self.pos = save_after_lparen;
-                }
+                if self.consume_punct(P::Semicolon) { return Ok(()); }
+                else { self.pos = save_after_lparen; }
             } else {
-                // Restore and try named parameter list
                 self.pos = save_after_lparen;
             }
             let (params, variadic) = self.parse_params()?; // consumes ')'
-            // If followed by ';' -> function prototype declaration (with names)
             if self.consume_punct(P::Semicolon) { return Ok(()); }
-            // Otherwise expect a function body
             let body = self.parse_block()?;
             let func = Function { name, ret_type: ty, params, variadic, body, storage };
             functions.push(func);
             return Ok(());
         }
 
-        // Optional array declarators for global variable: T a[10][2];
+        // Global arrays (right-to-left)
         if self.consume_punct(P::LBracket) {
             let mut sizes: Vec<usize> = Vec::new();
             loop {
@@ -932,7 +897,6 @@ impl Parser {
             for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
         }
 
-        // Optional initializer
         let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
         self.expect_punct(P::Semicolon)?;
         globals.push(Global { name, ty, init, storage, quals });
@@ -943,14 +907,13 @@ impl Parser {
         let mut functions: Vec<Function> = Vec::new();
         let mut globals: Vec<Global> = Vec::new();
         while let Some(tok) = self.peek() {
-            // Allow and skip stray semicolons at top-level
             if matches!(tok.kind, K::Punct(P::Semicolon)) { self.pos += 1; continue; }
-            // Attempt to parse a top-level item
             self.parse_top_level_item(&mut functions, &mut globals)?;
         }
         Ok(TranslationUnit { functions, records: self.records.clone(), enums: self.enums.clone(), globals })
     }
 }
+
 fn decode_char_literal(repr: &str) -> i32 {
     let bytes = repr.as_bytes();
     if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
@@ -976,7 +939,11 @@ fn decode_char_literal(repr: &str) -> i32 {
                         let mut acc: i32 = 0;
                         for ch in hex.chars() {
                             let v = ch.to_digit(16);
-                            if let Some(d) = v { acc = ((acc << 4) | (d as i32)) & 0xFF; } else { break; }
+                            if let Some(d) = v {
+                                acc = ((acc << 4) | (d as i32)) & 0xFF;
+                            } else {
+                                break;
+                            }
                         }
                         acc
                     }
@@ -984,8 +951,14 @@ fn decode_char_literal(repr: &str) -> i32 {
                         let mut acc: i32 = (d as i32 - '0' as i32) & 0x7;
                         for _ in 0..2 {
                             if let Some(ch) = rest.next() {
-                                if ch >= '0' && ch <= '7' { acc = ((acc << 3) | ((ch as i32 - '0' as i32) & 0x7)) & 0xFF; } else { break; }
-                            } else { break; }
+                                if ch >= '0' && ch <= '7' {
+                                    acc = ((acc << 3) | ((ch as i32 - '0' as i32) & 0x7)) & 0xFF;
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
                         }
                         acc
                     }
@@ -998,6 +971,7 @@ fn decode_char_literal(repr: &str) -> i32 {
         } else { 0 }
     } else { 0 }
 }
+
 pub fn parse_translation_unit(src: &str) -> Result<TranslationUnit> {
     let mut p = Parser::from_source(src);
     p.parse_translation_unit().context("failed to parse translation unit")

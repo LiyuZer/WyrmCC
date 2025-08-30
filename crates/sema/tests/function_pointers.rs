@@ -12,7 +12,10 @@ fn sema_funcptr_decay_and_call_ok() {
         }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_ok(), "expected sema ok for decay/address-of and call via pointer");
+    assert!(
+        check_translation_unit(&tu).is_ok(),
+        "expected sema ok for decay/address-of and call via pointer"
+    );
 }
 
 #[test]
@@ -23,7 +26,10 @@ fn sema_funcptr_assign_arity_mismatch_err() {
         int main(void) { return 0; }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_err(), "expected sema error for assigning function to mismatched pointer arity");
+    assert!(
+        check_translation_unit(&tu).is_err(),
+        "expected sema error for assigning function to mismatched pointer arity"
+    );
 }
 
 #[test]
@@ -37,7 +43,10 @@ fn sema_funcptr_call_arg_type_mismatch_err() {
         }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_err(), "expected sema error for call via pointer with wrong arg type");
+    assert!(
+        check_translation_unit(&tu).is_err(),
+        "expected sema error for call via pointer with wrong arg type"
+    );
 }
 
 #[test]
@@ -50,7 +59,10 @@ fn sema_funcptr_call_too_few_args_err() {
         }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_err(), "expected sema error for too few args via function pointer");
+    assert!(
+        check_translation_unit(&tu).is_err(),
+        "expected sema error for too few args via function pointer"
+    );
 }
 
 #[test]
@@ -63,7 +75,10 @@ fn sema_funcptr_call_too_many_args_err() {
         }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_err(), "expected sema error for too many args via function pointer");
+    assert!(
+        check_translation_unit(&tu).is_err(),
+        "expected sema error for too many args via function pointer"
+    );
 }
 
 #[test]
@@ -76,5 +91,8 @@ fn sema_variadic_builtin_printf_assignment_ok() {
         }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_ok(), "expected sema ok for assigning printf to variadic function pointer");
+    assert!(
+        check_translation_unit(&tu).is_ok(),
+        "expected sema ok for assigning printf to variadic function pointer"
+    );
 }

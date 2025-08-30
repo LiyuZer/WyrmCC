@@ -238,7 +238,6 @@ impl Parser {
             // No comma: we must be at the closing ')'
             self.expect_punct(P::RParen)?;
             break;
-            break;
         }
         Ok((params, variadic))
     }
@@ -272,6 +271,8 @@ impl Parser {
         }
         Ok((params, variadic))
     }
+
+    fn parse_primary_base(&mut self) -> Result<Expr> {
         match self.peek_kind() {
             Some(K::Literal(LiteralKind::Int { repr, .. })) => { self.pos += 1; Ok(Expr::IntLiteral(repr)) }
             Some(K::Literal(LiteralKind::String { repr })) => { self.pos += 1; Ok(Expr::StringLiteral(repr)) }
@@ -607,8 +608,37 @@ impl Parser {
         self.pop_typedef_scope();
         Ok(items)
     }
-
     fn parse_stmt(&mut self) -> Result<Stmt> {
+        // Nested block as a statement
+        if let Some(K::Punct(P::LBrace)) = self.peek().map(|t| &t.kind) {
+            let items = self.parse_block()?;
+            return Ok(Stmt::Block(items));
+        }
+
+        // Label: IDENT ':' at start of a statement
+        if let (Some(K::Identifier(_)), Some(K::Punct(P::Colon))) = (self.peek_kind(), self.peek_kind_n(1)) {
+            let name = if let Some(K::Identifier(s)) = self.bump().map(|t| t.kind.clone()) { s } else { unreachable!() };
+            self.expect_punct(P::Colon)?;
+            return Ok(Stmt::Label(name));
+        }
+
+        // Goto statement
+        if self.consume_keyword(Kw::Goto) {
+            let name = self.expect_ident()?;
+            self.expect_punct(P::Semicolon)?;
+            return Ok(Stmt::Goto(name));
+        }
+
+        // Break/Continue
+        if self.consume_keyword(Kw::Break) {
+            self.expect_punct(P::Semicolon)?;
+            return Ok(Stmt::Break);
+        }
+        if self.consume_keyword(Kw::Continue) {
+            self.expect_punct(P::Semicolon)?;
+            return Ok(Stmt::Continue);
+        }
+
         if self.consume_keyword(Kw::Return) {
             let e = self.parse_expr()?;
             self.expect_punct(P::Semicolon)?;
@@ -637,6 +667,48 @@ impl Parser {
             self.expect_punct(P::RParen)?;
             self.expect_punct(P::Semicolon)?;
             return Ok(Stmt::DoWhile { body, cond });
+        }
+
+        // For statement: for (init; cond; post) statement
+        if self.consume_keyword(Kw::For) {
+            self.expect_punct(P::LParen)?;
+            // init: optional expression before first ';'
+            let init = if self.consume_punct(P::Semicolon) {
+                None
+            } else {
+                let e = self.parse_expr()?;
+                self.expect_punct(P::Semicolon)?;
+                Some(e)
+            };
+            // cond: optional expression before second ';'
+            let cond = if self.consume_punct(P::Semicolon) {
+                None
+            } else {
+                let e = self.parse_expr()?;
+                self.expect_punct(P::Semicolon)?;
+                Some(e)
+            };
+            // post: optional expression before ')'
+            let post = if self.consume_punct(P::RParen) {
+                None
+            } else {
+                let e = self.parse_expr()?;
+                self.expect_punct(P::RParen)?;
+                Some(e)
+            };
+            let body = self.parse_stmt_or_block()?;
+            return Ok(Stmt::For { init, cond, post, body });
+        }
+
+        // Switch statement: switch (cond) { case/default ... }
+        if self.consume_keyword(Kw::Switch) {
+            self.expect_punct(P::LParen)?;
+            let cond = self.parse_expr()?;
+            self.expect_punct(P::RParen)?;
+            let body = self.parse_switch_body()?;
+            return Ok(Stmt::Switch { cond, body });
+        }
+
         if self.consume_keyword(Kw::Typedef) {
             let mut ty = self.parse_type()?;
             while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }

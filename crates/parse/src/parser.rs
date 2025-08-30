@@ -238,12 +238,40 @@ impl Parser {
             // No comma: we must be at the closing ')'
             self.expect_punct(P::RParen)?;
             break;
+            break;
         }
         Ok((params, variadic))
     }
 
-    // Primary without call/postfix handling
-    fn parse_primary_base(&mut self) -> Result<Expr> {
+    // New: parse a parameter type list (without names) for declarators
+    fn parse_param_types_list(&mut self) -> Result<(Vec<Type>, bool)> {
+        // () or (void)
+        if self.consume_punct(P::RParen) { return Ok((vec![], false)); }
+        if self.consume_keyword(Kw::Void) { self.expect_punct(P::RParen)?; return Ok((vec![], false)); }
+
+        let mut params: Vec<Type> = Vec::new();
+        let mut variadic = false;
+        loop {
+            // Trailing ellipsis allowed after at least one param
+            if let Some(K::Punct(P::Ellipsis)) = self.peek_kind() {
+                // consume '...'
+                self.pos += 1;
+                self.expect_punct(P::RParen)?;
+                variadic = true;
+                return Ok((params, variadic));
+            }
+            let mut ty = self.parse_type()?;
+            while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
+            params.push(ty);
+
+            if self.consume_punct(P::Comma) {
+                continue;
+            }
+            self.expect_punct(P::RParen)?;
+            break;
+        }
+        Ok((params, variadic))
+    }
         match self.peek_kind() {
             Some(K::Literal(LiteralKind::Int { repr, .. })) => { self.pos += 1; Ok(Expr::IntLiteral(repr)) }
             Some(K::Literal(LiteralKind::String { repr })) => { self.pos += 1; Ok(Expr::StringLiteral(repr)) }
@@ -609,49 +637,24 @@ impl Parser {
             self.expect_punct(P::RParen)?;
             self.expect_punct(P::Semicolon)?;
             return Ok(Stmt::DoWhile { body, cond });
-        }
-        if self.consume_keyword(Kw::For) {
-            self.expect_punct(P::LParen)?;
-            let init = if self.consume_punct(P::Semicolon) { None } else { let e = self.parse_expr()?; self.expect_punct(P::Semicolon)?; Some(e) };
-            let cond = if self.consume_punct(P::Semicolon) { None } else { let e = self.parse_expr()?; self.expect_punct(P::Semicolon)?; Some(e) };
-            let post = if self.consume_punct(P::RParen) { None } else { let e = self.parse_expr()?; self.expect_punct(P::RParen)?; Some(e) };
-            let body = self.parse_stmt_or_block()?;
-            return Ok(Stmt::For { init, cond, post, body });
-        }
-        if self.consume_keyword(Kw::Switch) {
-            self.expect_punct(P::LParen)?;
-            let cond = self.parse_expr()?;
-            self.expect_punct(P::RParen)?;
-            let body = self.parse_switch_body()?;
-            return Ok(Stmt::Switch { cond, body });
-        }
-        if self.consume_keyword(Kw::Break) { self.expect_punct(P::Semicolon)?; return Ok(Stmt::Break); }
-        if self.consume_keyword(Kw::Continue) { self.expect_punct(P::Semicolon)?; return Ok(Stmt::Continue); }
-
-        // Goto statement: goto IDENTIFIER ;
-        if self.consume_keyword(Kw::Goto) {
-            let name = self.expect_ident()?;
-            self.expect_punct(P::Semicolon)?;
-            return Ok(Stmt::Goto(name));
-        }
-
-        // Label statement: IDENTIFIER :
-        if let Some(K::Identifier(_)) = self.peek_kind() {
-            if let Some(K::Punct(P::Colon)) = self.peek_kind_n(1) {
-                // consume identifier and ':'
-                let name = if let Some(K::Identifier(s)) = self.bump().map(|t| t.kind.clone()) { s } else { unreachable!() };
-                let _ = self.bump(); // ':'
-                return Ok(Stmt::Label(name));
-            }
-        }
-
-        // Empty statement: ';' -> no-op
-        if self.consume_punct(P::Semicolon) { return Ok(Stmt::ExprStmt(Expr::IntLiteral("0".to_string()))); }
-
-        if let Some(K::Punct(P::LBrace)) = self.peek().map(|t| &t.kind) { let body = self.parse_block()?; return Ok(Stmt::Block(body)); }
         if self.consume_keyword(Kw::Typedef) {
             let mut ty = self.parse_type()?;
             while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
+
+            // Support function-pointer typedef: typedef T (*Name)(param-types);
+            if self.consume_punct(P::LParen) {
+                self.expect_punct(P::Star)?;
+                let name = self.expect_ident()?;
+                self.expect_punct(P::RParen)?;
+                self.expect_punct(P::LParen)?;
+                let (param_types, variadic) = self.parse_param_types_list()?; // consumes ')'
+                let fn_ty = Type::Func { ret: Box::new(ty), params: param_types, variadic };
+                let ty = Type::Pointer(Box::new(fn_ty));
+                self.expect_punct(P::Semicolon)?;
+                self.insert_typedef(name.clone());
+                return Ok(Stmt::Typedef { name, ty });
+            }
+
             let name = self.expect_ident()?;
             // Optional array declarators for typedef name: typedef int A[10][2];
             if self.consume_punct(P::LBracket) {
@@ -689,6 +692,20 @@ impl Parser {
             if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) {
                 return Ok(Stmt::ExprStmt(Expr::IntLiteral("0".to_string())));
             }
+
+            // Local function-pointer declaration support: int (*fp)(...);
+            if self.consume_punct(P::LParen) {
+                self.expect_punct(P::Star)?;
+                let name = self.expect_ident()?;
+                self.expect_punct(P::RParen)?;
+                self.expect_punct(P::LParen)?;
+                let (param_types, variadic) = self.parse_param_types_list()?;
+                let ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
+                let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
+                self.expect_punct(P::Semicolon)?;
+                return Ok(Stmt::Decl { name, ty, init, storage, quals });
+            }
+
             let name = self.expect_ident()?;
             // Support repeated array declarators a[...] [...]; build innermost first (right-to-left)
             if self.consume_punct(P::LBracket) {
@@ -776,6 +793,19 @@ impl Parser {
 
         // Handle tag-only declarations like 'struct S;'
         if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) { return Ok(()); }
+
+        // Support global function-pointer declarator: T (*name)(params);
+        if self.consume_punct(P::LParen) {
+            self.expect_punct(P::Star)?;
+            let name = self.expect_ident()?;
+            self.expect_punct(P::RParen)?;
+            self.expect_punct(P::LParen)?;
+            let (param_types, variadic) = self.parse_param_types_list()?;
+            let decl_ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
+            self.expect_punct(P::Semicolon)?;
+            globals.push(Global { name, ty: decl_ty, init: None, storage, quals });
+            return Ok(());
+        }
 
         let name = self.expect_ident()?;
 

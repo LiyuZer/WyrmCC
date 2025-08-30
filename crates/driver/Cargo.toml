@@ -8,11 +8,12 @@ clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 which = "6.0"
 tempfile = "3.10"
+libc = "0.2"
 lex = { path = "../lex" }
 backend = { path = "../backend" }
 parse = { path = "../parse" }
 sema = { path = "../sema" }
-
+pp = { path = "../pp" }
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"

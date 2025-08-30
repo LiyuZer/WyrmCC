@@ -15,7 +15,7 @@ fn parse_assignment_basic() {
     assert_eq!(f.name, "main");
     assert_eq!(f.body.len(), 3);
 
-    assert!(matches!(f.body[0], Stmt::Decl { ref name, ty: Type::Int, init: None } if name == "x"));
+    assert!(matches!(f.body[0], Stmt::Decl { ref name, ty: Type::Int, init: None, .. } if name == "x"));
     assert!(matches!(f.body[1], Stmt::ExprStmt(Expr::Assign { ref name, ref value }) if name == "x" && matches!(&**value, Expr::IntLiteral(ref s) if s == "5")));
     assert!(matches!(f.body[2], Stmt::Return(Expr::Ident(ref s)) if s == "x"));
 }

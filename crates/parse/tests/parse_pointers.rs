@@ -19,7 +19,7 @@ fn parse_pointer_decl_addr_deref_assign() {
 
     // int x;
     match &f.body[0] {
-        Stmt::Decl { name, ty, init } => {
+        Stmt::Decl { name, ty, init, .. } => {
             assert_eq!(name, "x");
             assert!(matches!(ty, Type::Int));
             assert!(init.is_none());
@@ -29,7 +29,7 @@ fn parse_pointer_decl_addr_deref_assign() {
 
     // int *p;
     match &f.body[1] {
-        Stmt::Decl { name, ty, init } => {
+        Stmt::Decl { name, ty, init, .. } => {
             assert_eq!(name, "p");
             match ty {
                 Type::Pointer(inner) => assert!(matches!(&**inner, Type::Int)),

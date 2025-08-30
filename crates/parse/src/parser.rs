@@ -86,22 +86,55 @@ impl Parser {
             break;
         }
 
-        // Accept C89 integer specifier sequences and map to Int for now
-        let mut saw_int_family = false;
+        // Accept C89 integer specifier sequences; track signedness and width
+        let mut saw_any_int_spec = false;
+        let mut saw_signed = false;
+        let mut saw_unsigned = false;
+        let mut count_short = 0usize;
+        let mut count_long = 0usize;
+        let mut saw_char = false;
+        let mut saw_int_kw = false;
         loop {
             match self.peek_kind() {
                 Some(K::Keyword(kw)) if matches!(kw, Kw::Signed | Kw::Unsigned | Kw::Short | Kw::Long | Kw::Char | Kw::Int) => {
                     self.pos += 1; // consume specifier
-                    saw_int_family = true;
+                    saw_any_int_spec = true;
+                    match kw {
+                        Kw::Signed => { saw_signed = true; }
+                        Kw::Unsigned => { saw_unsigned = true; }
+                        Kw::Short => { count_short = count_short.saturating_add(1); }
+                        Kw::Long => { count_long = count_long.saturating_add(1); }
+                        Kw::Char => { saw_char = true; }
+                        Kw::Int => { saw_int_kw = true; }
+                        _ => {}
+                    }
                 }
                 _ => break,
             }
         }
-        if saw_int_family { return Ok(Type::Int); }
-
+        if saw_any_int_spec {
+            // Map C89 integer specifier combinations to precise kinds.
+            // Rules:
+            // - 'char' with optional 'signed'/'unsigned'
+            // - 'short' [int], 'long' [int]
+            // - plain 'signed'/'unsigned' imply int
+            if saw_char {
+                let ty = if saw_unsigned { Type::UChar } else if saw_signed { Type::SChar } else { Type::Char };
+                return Ok(ty);
+            }
+            if count_short > 0 {
+                let ty = if saw_unsigned { Type::UShort } else { Type::Short };
+                return Ok(ty);
+            }
+            if count_long > 0 {
+                let ty = if saw_unsigned { Type::ULong } else { Type::Long };
+                return Ok(ty);
+            }
+            // Default: int family
+            let ty = if saw_unsigned { Type::UInt } else { Type::Int };
+            return Ok(ty);
+        }
         if self.consume_keyword(Kw::Void) { return Ok(Type::Void); }
-
-        // struct/union/enum with optional tag identifier and optional inline definition list
         if self.consume_keyword(Kw::Struct) {
             let tag = if let Some(K::Identifier(name)) = self.peek_kind() { self.pos += 1; name } else { String::new() };
             let mut members_acc: Vec<(String, Type)> = Vec::new();
@@ -159,7 +192,6 @@ impl Parser {
             }
             return Ok(Type::Enum(tag));
         }
-
         // typedef-name as a type-specifier
         if let Some(K::Identifier(ref s)) = self.peek_kind() {
             if self.is_typedef_name(s) {
@@ -168,29 +200,46 @@ impl Parser {
             }
         }
 
-        bail!("expected type (int, void, struct, union, enum, or typedef-name)")
+        bail!("expected type (int family, void, struct, union, enum, or typedef-name)")
     }
-
     fn parse_type_with_ptrs(&mut self) -> Result<Type> {
         let mut ty = self.parse_type()?;
         while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
         Ok(ty)
     }
+    fn parse_params(&mut self) -> Result<(Vec<Param>, bool)> {
+        // () or (void)
+        if self.consume_punct(P::RParen) { return Ok((vec![], false)); }
+        if self.consume_keyword(Kw::Void) { self.expect_punct(P::RParen)?; return Ok((vec![], false)); }
 
-    fn parse_params(&mut self) -> Result<Vec<Param>> {
-        if self.consume_punct(P::RParen) { return Ok(vec![]); }
-        if self.consume_keyword(Kw::Void) { self.expect_punct(P::RParen)?; return Ok(vec![]); }
+        // Disallow leading ellipsis (must have at least one named parameter before ...)
+        if let Some(K::Punct(P::Ellipsis)) = self.peek_kind() { bail!("ellipsis requires at least one named parameter before it"); }
+
         let mut params = Vec::new();
+        let mut variadic = false;
         loop {
             let mut ty = self.parse_type()?;
             while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
             let name = self.expect_ident()?;
             params.push(Param { name, ty });
-            if self.consume_punct(P::Comma) { continue; }
+
+            // Comma: either another parameter or a trailing ellipsis
+            if self.consume_punct(P::Comma) {
+                if let Some(K::Punct(P::Ellipsis)) = self.peek_kind() {
+                    // Trailing ellipsis must be last, require closing ')'
+                    self.pos += 1; // consume '...'
+                    self.expect_punct(P::RParen)?;
+                    variadic = true;
+                    return Ok((params, variadic));
+                }
+                // Otherwise, continue parsing next named parameter
+                continue;
+            }
+            // No comma: we must be at the closing ')'
             self.expect_punct(P::RParen)?;
             break;
         }
-        Ok(params)
+        Ok((params, variadic))
     }
 
     // Primary without call/postfix handling
@@ -569,20 +618,60 @@ impl Parser {
         }
         if self.consume_keyword(Kw::Break) { self.expect_punct(P::Semicolon)?; return Ok(Stmt::Break); }
         if self.consume_keyword(Kw::Continue) { self.expect_punct(P::Semicolon)?; return Ok(Stmt::Continue); }
+
+        // Goto statement: goto IDENTIFIER ;
+        if self.consume_keyword(Kw::Goto) {
+            let name = self.expect_ident()?;
+            self.expect_punct(P::Semicolon)?;
+            return Ok(Stmt::Goto(name));
+        }
+
+        // Label statement: IDENTIFIER :
+        if let Some(K::Identifier(_)) = self.peek_kind() {
+            if let Some(K::Punct(P::Colon)) = self.peek_kind_n(1) {
+                // consume identifier and ':'
+                let name = if let Some(K::Identifier(s)) = self.bump().map(|t| t.kind.clone()) { s } else { unreachable!() };
+                let _ = self.bump(); // ':'
+                return Ok(Stmt::Label(name));
+            }
+        }
+
+        // Empty statement: ';' -> no-op
+        if self.consume_punct(P::Semicolon) { return Ok(Stmt::ExprStmt(Expr::IntLiteral("0".to_string()))); }
+
         if let Some(K::Punct(P::LBrace)) = self.peek().map(|t| &t.kind) { let body = self.parse_block()?; return Ok(Stmt::Block(body)); }
         if self.consume_keyword(Kw::Typedef) {
             let mut ty = self.parse_type()?;
             while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
             let name = self.expect_ident()?;
+            // Optional array declarators for typedef name: typedef int A[10][2];
+            if self.consume_punct(P::LBracket) {
+                let mut sizes: Vec<usize> = Vec::new();
+                loop {
+                    let sz = match self.peek_kind() {
+                        Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                        other => bail!("expected integer literal array size, got {:?}", other),
+                    };
+                    self.expect_punct(P::RBracket)?;
+                    sizes.push(sz);
+                    if !self.consume_punct(P::LBracket) { break; }
+                }
+                for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
+            }
             self.expect_punct(P::Semicolon)?;
             self.insert_typedef(name.clone());
             return Ok(Stmt::Typedef { name, ty });
         }
         let save = self.pos;
+        // Accumulate storage and qualifiers for local declarations
+        let mut storage: Option<Storage> = None;
+        let mut quals = Qualifiers::none();
         loop {
-            if self.consume_keyword(Kw::Extern) || self.consume_keyword(Kw::Static) || self.consume_keyword(Kw::Register) || self.consume_keyword(Kw::Auto) || self.consume_keyword(Kw::Const) || self.consume_keyword(Kw::Volatile) {
-                continue;
-            }
+            if self.consume_keyword(Kw::Extern) { storage = Some(Storage::Extern); continue; }
+            if self.consume_keyword(Kw::Static) { storage = Some(Storage::Static); continue; }
+            if self.consume_keyword(Kw::Const) { quals.is_const = true; continue; }
+            if self.consume_keyword(Kw::Volatile) { quals.is_volatile = true; continue; }
+            if self.consume_keyword(Kw::Register) || self.consume_keyword(Kw::Auto) { continue; }
             break;
         }
         if self.peek_is_type_name() {
@@ -592,53 +681,92 @@ impl Parser {
                 return Ok(Stmt::ExprStmt(Expr::IntLiteral("0".to_string())));
             }
             let name = self.expect_ident()?;
+            // Support repeated array declarators a[...] [...]; build innermost first (right-to-left)
             if self.consume_punct(P::LBracket) {
-                let sz = match self.peek_kind() {
-                    Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
-                    other => bail!("expected integer literal array size, got {:?}", other),
-                };
-                self.expect_punct(P::RBracket)?;
-                ty = Type::Array(Box::new(ty), sz);
+                let mut sizes: Vec<usize> = Vec::new();
+                loop {
+                    let sz = match self.peek_kind() {
+                        Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                        other => bail!("expected integer literal array size, got {:?}", other),
+                    };
+                    self.expect_punct(P::RBracket)?;
+                    sizes.push(sz);
+                    if !self.consume_punct(P::LBracket) { break; }
+                }
+                // Fold sizes from right to left to make the rightmost dimension the innermost
+                for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
             }
             let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
             self.expect_punct(P::Semicolon)?;
-            return Ok(Stmt::Decl { name, ty, init });
+            return Ok(Stmt::Decl { name, ty, init, storage, quals });
+        }
+        // Fallback: treat IDENTIFIER (with optional '*') IDENTIFIER as a declaration
+        // This allows parsing unknown typedef names (e.g., 'T x;') to be handled by sema.
+        let after_quals_pos = self.pos;
+        if let Some(K::Identifier(_)) = self.peek_kind() {
+            // Lookahead: IDENTIFIER ('*')* IDENTIFIER -> plausible declaration
+            let mut i = 1usize;
+            while let Some(K::Punct(P::Star)) = self.peek_kind_n(i) { i += 1; }
+            if matches!(self.peek_kind_n(i), Some(K::Identifier(_))) {
+                // Parse as declaration with Type::Named(first_identifier)
+                let tn = if let Some(K::Identifier(s)) = self.bump().map(|t| t.kind.clone()) { s } else { unreachable!() };
+                let mut ty = Type::Named(tn);
+                while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
+                let name = self.expect_ident()?;
+                if self.consume_punct(P::LBracket) {
+                    let mut sizes: Vec<usize> = Vec::new();
+                    loop {
+                        let sz = match self.peek_kind() {
+                            Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                            other => bail!("expected integer literal array size, got {:?}", other),
+                        };
+                        self.expect_punct(P::RBracket)?;
+                        sizes.push(sz);
+                        if !self.consume_punct(P::LBracket) { break; }
+                    }
+                    for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
+                }
+                let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
+                self.expect_punct(P::Semicolon)?;
+                return Ok(Stmt::Decl { name, ty, init, storage, quals });
+            } else {
+                // Not a plausible declaration; restore to after qualifiers for expression parse
+                self.pos = after_quals_pos;
+            }
         }
         self.pos = save;
         let e = self.parse_expr()?;
         self.expect_punct(P::Semicolon)?;
         Ok(Stmt::ExprStmt(e))
     }
-
     fn parse_function(&mut self, ret_type: Type, name: String) -> Result<Function> {
         self.expect_punct(P::LParen)?;
-        let params = self.parse_params()?;
+        let (params, variadic) = self.parse_params()?;
         let body = self.parse_block()?;
-        Ok(Function { name, ret_type, params, body })
+        Ok(Function { name, ret_type, params, variadic, body, storage: None })
     }
 
     // New: parse a single top-level item (function definition or global declaration)
     fn parse_top_level_item(&mut self, functions: &mut Vec<Function>, globals: &mut Vec<Global>) -> Result<()> {
         // Consume optional storage-class specifiers and qualifiers
         let mut storage: Option<Storage> = None;
+        let mut quals = Qualifiers::none();
         loop {
             if self.consume_keyword(Kw::Extern) { storage = Some(Storage::Extern); continue; }
             if self.consume_keyword(Kw::Static) { storage = Some(Storage::Static); continue; }
-            if self.consume_keyword(Kw::Register) || self.consume_keyword(Kw::Auto) || self.consume_keyword(Kw::Const) || self.consume_keyword(Kw::Volatile) { continue; }
+            if self.consume_keyword(Kw::Const) { quals.is_const = true; continue; }
+            if self.consume_keyword(Kw::Volatile) { quals.is_volatile = true; continue; }
+            if self.consume_keyword(Kw::Register) || self.consume_keyword(Kw::Auto) { continue; }
             break;
         }
 
-        if !self.peek_is_type_name() {
-            bail!("expected type at top level");
-        }
+        if !self.peek_is_type_name() { bail!("expected type at top level"); }
 
         let mut ty = self.parse_type()?;
         while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
 
         // Handle tag-only declarations like 'struct S;'
-        if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) {
-            return Ok(());
-        }
+        if matches!(ty, Type::Struct(_) | Type::Union(_) | Type::Enum(_)) && self.consume_punct(P::Semicolon) { return Ok(()); }
 
         let name = self.expect_ident()?;
 
@@ -646,15 +774,12 @@ impl Parser {
         if let Some(K::Punct(P::LParen)) = self.peek_kind() {
             // Parse parameter list
             self.pos += 1; // '('
-            let params = self.parse_params()?; // consumes ')'
+            let (params, variadic) = self.parse_params()?; // consumes ')'
             // If followed by ';' -> function prototype declaration (no body)
-            if self.consume_punct(P::Semicolon) {
-                // For now, prototypes are ignored in the AST (sufficient for multi-TU tests)
-                return Ok(());
-            }
+            if self.consume_punct(P::Semicolon) { return Ok(()); }
             // Otherwise expect a function body
             let body = self.parse_block()?;
-            let func = Function { name, ret_type: ty, params, body };
+            let func = Function { name, ret_type: ty, params, variadic, body, storage };
             functions.push(func);
             return Ok(());
         }
@@ -672,7 +797,7 @@ impl Parser {
         // Optional initializer
         let init = if self.consume_punct(P::Assign) { Some(self.parse_expr()?) } else { None };
         self.expect_punct(P::Semicolon)?;
-        globals.push(Global { name, ty, init, storage });
+        globals.push(Global { name, ty, init, storage, quals });
         Ok(())
     }
 

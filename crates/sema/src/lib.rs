@@ -27,39 +27,143 @@ pub struct UnionLayout {
 /// This will be extended as more C89 types are added (struct/union/arrays, etc.).
 pub fn sizeof_type(ty: &Type) -> usize {
     match ty {
-        Type::Int => SIZEOF_INT,
-        Type::Void => 0, // C89: sizeof(void) is invalid; sema should error later  keep 0 as a placeholder
+        // C89 integers
+        Type::Char | Type::SChar | Type::UChar => 1,
+        Type::Short | Type::UShort => 2,
+        // Target assumption: int and long are 4 bytes in this project
+        Type::Int | Type::UInt | Type::Long | Type::ULong => SIZEOF_INT,
+
+        Type::Void => 0, // C89: sizeof(void) is invalid; sema should error later – keep 0 as a placeholder
         Type::Pointer(_) => SIZEOF_PTR,
         Type::Array(elem, n) => n.saturating_mul(sizeof_type(elem)),
-        // New variants (placeholders for now); use record layouts via helpers for actual sizes
+
+        // Enums have int size on this target for now
         Type::Enum(_) => SIZEOF_INT,
-        Type::Struct(_) | Type::Union(_) => 0, // incomplete aggregates until full layout implemented
-        Type::Named(_) => SIZEOF_INT, // typedef-name placeholder until resolved
+
+        // Aggregates require precomputed layouts; 0 for incomplete here
+        Type::Struct(_) | Type::Union(_) => 0,
+
+        // Function types are not objects; sizeof(function) is invalid; keep 0 as placeholder
+        Type::Func { .. } => 0,
+
+        // typedef-name placeholder until resolved
+        Type::Named(_) => SIZEOF_INT,
     }
 }
 
-/// Return alignment (in bytes) of a type. Placeholder for now.
+/// Return alignment (in bytes) of a type.
 pub fn alignof_type(ty: &Type) -> usize {
     match ty {
-        Type::Int => ALIGN_INT,
+        // C89 integers
+        Type::Char | Type::SChar | Type::UChar => 1,
+        Type::Short | Type::UShort => 2,
+        // int/long align to 4 on this target
+        Type::Int | Type::UInt | Type::Long | Type::ULong => ALIGN_INT,
+
         Type::Void => 1, // arbitrary; void as an object type is invalid
         Type::Pointer(_) => ALIGN_PTR,
         Type::Array(elem, _n) => alignof_type(elem),
-        // New variants (placeholders for now)
+
+        // Enums align as ints
         Type::Enum(_) => ALIGN_INT,
+
+        // Aggregates: default to int alignment unless layout computed elsewhere
         Type::Struct(_) | Type::Union(_) => ALIGN_INT,
+
+        // Function types are not objects; choose minimal alignment placeholder
+        Type::Func { .. } => 1,
+
+        // typedef-name placeholder
         Type::Named(_) => ALIGN_INT,
     }
 }
 
-fn is_integer(ty: &Type) -> bool { matches!(ty, Type::Int) }
+fn is_integer(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Char | Type::SChar | Type::UChar
+            | Type::Short | Type::UShort
+            | Type::Int | Type::UInt
+            | Type::Long | Type::ULong
+            | Type::Enum(_)
+    )
+}
+
 fn is_pointer(ty: &Type) -> bool { matches!(ty, Type::Pointer(_)) }
 
-/// Try to perform a simple usual arithmetic conversion between two integer types
-/// (for now we only have Int, so Int/Int -> Int).
-fn usual_arith_conv(a: &Type, b: &Type) -> Option<Type> {
-    if is_integer(a) && is_integer(b) { Some(Type::Int) } else { None }
+/// Integer promotions and usual arithmetic conversions for 32-bit int/long model
+fn int_width(ty: &Type) -> u32 {
+    match ty {
+        Type::Char | Type::SChar | Type::UChar => 8,
+        Type::Short | Type::UShort => 16,
+        Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Enum(_) => 32,
+        _ => 0,
+    }
 }
+
+fn is_signed_ty(ty: &Type) -> bool {
+    matches!(ty, Type::Char | Type::SChar | Type::Short | Type::Int | Type::Long | Type::Enum(_))
+}
+
+fn integer_promotion(ty: &Type) -> Option<Type> {
+    if !is_integer(ty) { return None; }
+    // On this target, all narrow integer types promote to int
+    if int_width(ty) < 32 { return Some(Type::Int); }
+    Some(ty.clone())
+}
+
+/// Apply usual arithmetic conversions after integer promotions.
+fn usual_arith_conv(a: &Type, b: &Type) -> Option<Type> {
+    if !is_integer(a) || !is_integer(b) { return None; }
+    let a = integer_promotion(a).unwrap();
+    let b = integer_promotion(b).unwrap();
+    if a == b { return Some(a); }
+    use Type::*;
+
+    // If either is unsigned long, result is unsigned long
+    if matches!(a, ULong) || matches!(b, ULong) { return Some(ULong); }
+
+    match (&a, &b) {
+        // long vs unsigned int (both 32-bit here) -> unsigned long
+        (Long, UInt) | (UInt, Long) => Some(ULong),
+        // long vs int -> long
+        (Long, Int) | (Int, Long) => Some(Long),
+        // uint vs int -> uint
+        (UInt, Int) | (Int, UInt) => Some(UInt),
+        // other combos that still involve ULong
+        (ULong, Long) | (Long, ULong) => Some(ULong),
+        (ULong, Int) | (Int, ULong) | (ULong, UInt) | (UInt, ULong) => Some(ULong),
+        _ => {
+            // After promotions, remaining cases are effectively Int/UInt/Long
+            if is_signed_ty(&a) == is_signed_ty(&b) {
+                // same signedness: pick wider rank; all 32-bit here so Int is fine
+                Some(Int)
+            } else {
+                // different signedness, same width -> unsigned wins
+                Some(UInt)
+            }
+        }
+    }
+}
+
+/// Public helpers for usual arithmetic conversions and conditional operator result type.
+pub fn arith_result_type(a: &Type, b: &Type) -> Option<Type> {
+    usual_arith_conv(a, b)
+}
+
+pub fn cond_result_type(t_then: &Type, t_else: &Type) -> Option<Type> {
+    if is_integer(t_then) && is_integer(t_else) {
+        usual_arith_conv(t_then, t_else)
+    } else {
+        None
+    }
+}
+
+/// Public: return the promoted integer type (for shifts and tests)
+pub fn promoted_int_type(t: &Type) -> Option<Type> { integer_promotion(t) }
+
+/// Public: shift result is the promoted left operand type
+pub fn shift_result_lhs_promoted(lhs: &Type) -> Option<Type> { integer_promotion(lhs) }
 
 fn parse_int_literal_str(repr: &str) -> Option<i64> {
     if let Some(hex) = repr.strip_prefix("0x").or_else(|| repr.strip_prefix("0X")) {
@@ -156,25 +260,44 @@ pub fn compute_enum_values(tu: &TranslationUnit) -> HashMap<String, i64> {
 /// A minimal semantic analyzer with scoped symbol tables and basic type checks.
 struct Sema {
     scopes: Vec<HashMap<String, Type>>, // block/function scopes
+    // Typedef scope stack: separate namespace from variables
+    typedef_scopes: Vec<HashMap<String, Type>>, // name -> resolved type
     // Record layouts and enums for typing member access and sizeof in future
     struct_layouts: HashMap<String, StructLayout>,
     union_layouts: HashMap<String, UnionLayout>,
     enum_vals: HashMap<String, i64>,
     // New: global symbols (name -> type) for lookup within functions
     global_syms: HashMap<String, Type>,
+    // New: function signatures: name -> (ret, params, variadic)
+    func_sigs: HashMap<String, (Type, Vec<Type>, bool)>,
 }
 
 impl Sema {
-    fn new() -> Self { Self { scopes: Vec::new(), struct_layouts: HashMap::new(), union_layouts: HashMap::new(), enum_vals: HashMap::new(), global_syms: HashMap::new() } }
+    fn new() -> Self { Self { scopes: Vec::new(), typedef_scopes: Vec::new(), struct_layouts: HashMap::new(), union_layouts: HashMap::new(), enum_vals: HashMap::new(), global_syms: HashMap::new(), func_sigs: HashMap::new() } }
 
     fn from_tu(tu: &TranslationUnit) -> Self {
         let (s, u) = build_record_layouts(tu);
         let e = compute_enum_values(tu);
-        Self { scopes: Vec::new(), struct_layouts: s, union_layouts: u, enum_vals: e, global_syms: HashMap::new() }
+        let mut me = Self { scopes: Vec::new(), typedef_scopes: Vec::new(), struct_layouts: s, union_layouts: u, enum_vals: e, global_syms: HashMap::new(), func_sigs: HashMap::new() };
+        me.populate_function_signatures(tu);
+        me
     }
 
-    fn push_scope(&mut self) { self.scopes.push(HashMap::new()); }
-    fn pop_scope(&mut self) { let _ = self.scopes.pop(); }
+    fn populate_function_signatures(&mut self, tu: &TranslationUnit) {
+        // Collect from TU definitions
+        for f in &tu.functions {
+            let params: Vec<Type> = f.params.iter().map(|p| p.ty.clone()).collect();
+            self.func_sigs.insert(f.name.clone(), (f.ret_type.clone(), params, f.variadic));
+        }
+        // Built-ins used by tests/runtime
+        // puts: int puts(char*) -> approximate as int*(ptr to int)
+        self.func_sigs.entry("puts".to_string()).or_insert((Type::Int, vec![Type::Pointer(Box::new(Type::Int))], false));
+        // printf: int printf(char*, ...) -> approximate as int*(ptr to int), variadic
+        self.func_sigs.entry("printf".to_string()).or_insert((Type::Int, vec![Type::Pointer(Box::new(Type::Int))], true));
+    }
+
+    fn push_scope(&mut self) { self.scopes.push(HashMap::new()); self.typedef_scopes.push(HashMap::new()); }
+    fn pop_scope(&mut self) { let _ = self.scopes.pop(); let _ = self.typedef_scopes.pop(); }
 
     fn insert(&mut self, name: String, ty: Type) { if let Some(s) = self.scopes.last_mut() { s.insert(name, ty); } }
 
@@ -186,34 +309,86 @@ impl Sema {
         None
     }
 
+    fn lookup_typedef(&self, name: &str) -> Option<Type> {
+        for s in self.typedef_scopes.iter().rev() {
+            if let Some(t) = s.get(name) { return Some(t.clone()); }
+        }
+        None
+    }
+
+    fn resolve_type_internal(&self, ty: &Type, seen: &mut HashSet<String>) -> Result<Type> {
+        match ty {
+            Type::Named(nm) => {
+                if !seen.insert(nm.clone()) {
+                    return Err(anyhow!("cyclic typedef detected: {}", nm));
+                }
+                let base = self.lookup_typedef(nm).ok_or_else(|| anyhow!("unknown typedef name: {}", nm))?;
+                let out = self.resolve_type_internal(&base, seen)?;
+                Ok(out)
+            }
+            Type::Pointer(inner) => {
+                let r = self.resolve_type_internal(inner, seen)?;
+                Ok(Type::Pointer(Box::new(r)))
+            }
+            Type::Array(inner, n) => {
+                let r = self.resolve_type_internal(inner, seen)?;
+                Ok(Type::Array(Box::new(r), *n))
+            }
+            other => Ok(other.clone()),
+        }
+    }
+
+    fn resolve_type(&self, ty: &Type) -> Result<Type> {
+        let mut seen: HashSet<String> = HashSet::new();
+        self.resolve_type_internal(ty, &mut seen)
+    }
+
     fn process_globals(&mut self, tu: &TranslationUnit) -> Result<()> {
-        let mut defined: HashSet<String> = HashSet::new();
+        // First pass: collect per-name info across the TU
+        #[derive(Default)]
+        struct Info { has_extern: bool, defs: usize, tentatives: usize }
+        let mut map: HashMap<String, Info> = HashMap::new();
+
         for g in &tu.globals {
             let name = g.name.clone();
             let ty = g.ty.clone();
             let is_extern = matches!(g.storage, Some(Storage::Extern));
+            let has_init = g.init.is_some();
 
-            if !is_extern {
-                // treat any non-extern declaration as a definition in this TU
-                if !defined.insert(name.clone()) {
-                    return Err(anyhow!("duplicate global definition: {}", name));
-                }
-            } else {
-                // extern with initializer is not allowed
-                if g.init.is_some() {
-                    return Err(anyhow!("extern global '{}' cannot have initializer", name));
-                }
+            // extern with initializer is invalid
+            if is_extern && has_init {
+                return Err(anyhow!("extern global '{}' cannot have initializer", name));
             }
 
+            // Validate constant initializer when present
             if let Some(init) = &g.init {
                 if !self.is_const_initializer(&ty, init) {
                     return Err(anyhow!("non-constant global initializer for {}", name));
                 }
             }
 
-            // Record in globals map for lookup in function bodies
+            // Aggregate counts
+            let entry = map.entry(name.clone()).or_default();
+            if is_extern {
+                entry.has_extern = true;
+            } else if has_init {
+                entry.defs = entry.defs.saturating_add(1);
+            } else {
+                // non-extern without init: tentative definition
+                entry.tentatives = entry.tentatives.saturating_add(1);
+            }
+
+            // Record in globals map for lookup in function bodies (first-seen wins)
             self.global_syms.entry(name).or_insert(ty);
         }
+
+        // Diagnostics: more than one actual definition within the same TU is an error
+        for (name, info) in &map {
+            if info.defs > 1 {
+                return Err(anyhow!("duplicate global definition: {}", name));
+            }
+        }
+
         Ok(())
     }
 
@@ -249,7 +424,7 @@ impl Sema {
     }
 
     fn check_tu(&mut self, tu: &TranslationUnit) -> Result<()> {
-        // Process globals first (collect types and validate initializers)
+        // Gather function signatures (already done in from_tu) and process globals
         self.process_globals(tu)?;
         for f in &tu.functions {
             self.check_function(f)?;
@@ -261,7 +436,8 @@ impl Sema {
         // Start a fresh scope for params
         self.push_scope();
         for p in &f.params {
-            self.insert(p.name.clone(), p.ty.clone());
+            let rty = self.resolve_type(&p.ty)?;
+            self.insert(p.name.clone(), rty);
         }
         // Function body
         self.check_block(&f.body)?;
@@ -340,17 +516,42 @@ impl Sema {
             }
             Stmt::Break | Stmt::Continue => Ok(()),
             Stmt::Return(e) => { let _ = self.type_expr(e)?; Ok(()) }
-            Stmt::Decl { name, ty, init } => {
+            Stmt::Decl { name, ty, init, .. } => {
+                let rty = self.resolve_type(ty)?;
                 if let Some(e) = init { let _ = self.type_expr(e)?; }
-                self.insert(name.clone(), ty.clone());
+                self.insert(name.clone(), rty);
                 Ok(())
             }
-            Stmt::Typedef { name: _, ty: _ } => {
-                // typedef has no runtime effect for now (namespaces to be added later)
-                Ok(())
+            Stmt::Typedef { name, ty } => {
+                let rty = self.resolve_type(ty)?;
+                if let Some(scope) = self.typedef_scopes.last_mut() {
+                    if scope.contains_key(name) {
+                        return Err(anyhow!("redefinition of typedef {} in the same scope", name));
+                    }
+                    scope.insert(name.clone(), rty);
+                    Ok(())
+                } else {
+                    Err(anyhow!("typedef outside of any scope"))
+                }
             }
+            Stmt::Label(_name) => { Ok(()) }
+            Stmt::Goto(_name) => { Ok(()) }
             Stmt::ExprStmt(e) => { let _ = self.type_expr(e)?; Ok(()) }
         }
+    }
+
+    fn decay_array_to_ptr(&self, t: &Type) -> Result<Type> {
+        let r = self.resolve_type(t)?;
+        match r {
+            Type::Array(inner, _n) => Ok(Type::Pointer(inner)),
+            other => Ok(other),
+        }
+    }
+
+    fn type_compatible_for_param(&self, param: &Type, arg: &Type) -> Result<bool> {
+        let p = self.resolve_type(param)?;
+        let a = self.decay_array_to_ptr(arg)?;
+        Ok((is_integer(&p) && is_integer(&a)) || (is_pointer(&p) && is_pointer(&a)))
     }
 
     fn type_expr(&mut self, e: &Expr) -> Result<Type> {
@@ -365,27 +566,32 @@ impl Sema {
                 let t = self.type_expr(expr)?;
                 match op {
                     UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNot | UnaryOp::LogicalNot => {
-                        if !is_integer(&t) { /* be permissive for now */ }
+                        if !is_integer(&self.resolve_type(&t)?) { /* be permissive for now */ }
                         Ok(Type::Int)
                     }
                     UnaryOp::AddrOf => {
-                        // Very permissive: & of an lvalue yields pointer to its type.
-                        Ok(Type::Pointer(Box::new(t)))
+                        let rt = self.resolve_type(&t)?;
+                        Ok(Type::Pointer(Box::new(rt)))
                     }
                     UnaryOp::Deref => {
-                        if let Type::Pointer(inner) = t { Ok(*inner) } else { Err(anyhow!("cannot dereference non-pointer")) }
+                        let rt = self.resolve_type(&t)?;
+                        if let Type::Pointer(inner) = rt { Ok(*inner) } else { Err(anyhow!("cannot dereference non-pointer")) }
                     }
                 }
             }
 
             Expr::Binary { op, lhs, rhs } => {
-                let lt = self.type_expr(lhs)?;
-                let rt = self.type_expr(rhs)?;
+                let lt_raw = self.type_expr(lhs)?;
+                let rt_raw = self.type_expr(rhs)?;
+                let lt_res = self.resolve_type(&lt_raw)?;
+                let rt_res = self.resolve_type(&rt_raw)?;
+                // Decay array types to pointers where applicable
+                let lt = match lt_res { Type::Array(inner, _) => Type::Pointer(inner), other => other };
+                let rt = match rt_res { Type::Array(inner, _) => Type::Pointer(inner), other => other };
                 use BinaryOp as B;
                 match op {
-                    // arithmetic/bitwise/shift
-                    B::Plus | B::Minus | B::Mul | B::Div | B::Mod |
-                    B::Shl | B::Shr  | B::BitAnd | B::BitOr | B::BitXor => {
+                    // arithmetic and bitwise (excluding shifts)
+                    B::Plus | B::Minus | B::Mul | B::Div | B::Mod | B::BitAnd | B::BitOr | B::BitXor => {
                         // pointer arithmetic cases for +/-
                         if matches!(op, B::Plus | B::Minus) {
                             match (&lt, &rt) {
@@ -397,11 +603,18 @@ impl Sema {
                         }
                         usual_arith_conv(&lt, &rt).ok_or_else(|| anyhow!("invalid arithmetic between {:?} and {:?}", lt, rt))
                     }
+                    // shifts: result is the promoted left operand type; rhs is converted to int
+                    B::Shl | B::Shr => {
+                        if !is_integer(&lt) || !is_integer(&rt) {
+                            return Err(anyhow!("invalid shift between {:?} and {:?}", lt, rt));
+                        }
+                        promoted_int_type(&lt).ok_or_else(|| anyhow!("failed to promote shift lhs"))
+                    }
                     // logical && || -> int (truthiness)
                     B::LAnd | B::LOr => Ok(Type::Int),
-                    // comparisons -> int; allow pointer eq/ne too (including pointer vs int null)
+                    // comparisons -> int; require arithmetic types (apply UAC for validation)
                     B::Lt | B::Le | B::Gt | B::Ge => {
-                        if is_integer(&lt) && is_integer(&rt) { Ok(Type::Int) }
+                        if usual_arith_conv(&lt, &rt).is_some() { Ok(Type::Int) }
                         else { Err(anyhow!("invalid relational compare between {:?} and {:?}", lt, rt)) }
                     }
                     B::Eq | B::Ne => {
@@ -418,7 +631,9 @@ impl Sema {
 
             Expr::Assign { name, value } => {
                 let vt = self.type_expr(value)?;
+                let vt = self.resolve_type(&vt)?;
                 let nt = self.lookup(name).ok_or_else(|| anyhow!("assignment to undeclared identifier: {}", name))?;
+                let nt = self.resolve_type(&nt)?;
                 // very permissive: allow int<-int and pointer<-pointer
                 if (is_integer(&nt) && is_integer(&vt)) || (is_pointer(&nt) && is_pointer(&vt)) {
                     Ok(nt)
@@ -429,7 +644,9 @@ impl Sema {
 
             Expr::AssignDeref { ptr, value } => {
                 let pt = self.type_expr(ptr)?;
+                let pt = self.resolve_type(&pt)?;
                 let vt = self.type_expr(value)?;
+                let vt = self.resolve_type(&vt)?;
                 match pt {
                     Type::Pointer(inner) => {
                         // allow *ptr = int for now when inner is Int
@@ -440,20 +657,87 @@ impl Sema {
             }
 
             Expr::Call { callee, args } => {
-                // Minimal typing: assume functions return int
-                if callee == "puts" {
-                    // expect a pointer argument; be permissive
-                    if !args.is_empty() { let _ = self.type_expr(&args[0])?; }
-                    Ok(Type::Int)
+                if let Some((ret_t, params, variadic)) = self.func_sigs.get(callee).cloned() {
+                    // Arity checks
+                    if !variadic && args.len() != params.len() {
+                        return Err(anyhow!(
+                            "arity mismatch in call to {}: expected {}, got {}",
+                            callee, params.len(), args.len()
+                        ));
+                    }
+                    if variadic && args.len() < params.len() {
+                        return Err(anyhow!(
+                            "too few arguments in call to {}: expected at least {}, got {}",
+                            callee, params.len(), args.len()
+                        ));
+                    }
+                    // Check fixed arguments
+                    for (i, pty) in params.iter().enumerate() {
+                        let aty = self.type_expr(&args[i])?;
+                        if !self.type_compatible_for_param(pty, &aty)? {
+                            let rpt = self.resolve_type(pty)?;
+                            let rat = self.resolve_type(&aty)?;
+                            return Err(anyhow!(
+                                "type mismatch for argument {} in call to {}: expected {:?}, got {:?}",
+                                i+1, callee, rpt, rat
+                            ));
+                        }
+                    }
+                    // Check the rest (variadic part) are typeable
+                    for a in args.iter().skip(params.len()) {
+                        let _ = self.type_expr(a)?; // ensure typeable
+                    }
+                    Ok(ret_t)
                 } else {
+                    // Unknown extern: be permissive, type-check args only
                     for a in args { let _ = self.type_expr(a)?; }
                     Ok(Type::Int)
                 }
             }
 
+            Expr::CallPtr { target, args } => {
+                // Indirect call via function pointer
+                let t_callee = self.type_expr(target)?;
+                let t_callee = self.resolve_type(&t_callee)?;
+                match t_callee {
+                    Type::Pointer(inner) => match *inner {
+                        Type::Func { ret, params, variadic } => {
+                            if !variadic && args.len() != params.len() {
+                                return Err(anyhow!(
+                                    "arity mismatch in indirect call: expected {}, got {}",
+                                    params.len(), args.len()
+                                ));
+                            }
+                            if variadic && args.len() < params.len() {
+                                return Err(anyhow!(
+                                    "too few arguments in indirect call: expected at least {}, got {}",
+                                    params.len(), args.len()
+                                ));
+                            }
+                            for (i, pty) in params.iter().enumerate() {
+                                let aty = self.type_expr(&args[i])?;
+                                if !self.type_compatible_for_param(pty, &aty)? {
+                                    let rpt = self.resolve_type(pty)?;
+                                    let rat = self.resolve_type(&aty)?;
+                                    return Err(anyhow!(
+                                        "type mismatch for argument {} in indirect call: expected {:?}, got {:?}",
+                                        i+1, rpt, rat
+                                    ));
+                                }
+                            }
+                            for a in args.iter().skip(params.len()) { let _ = self.type_expr(a)?; }
+                            Ok(*ret)
+                        }
+                        other => Err(anyhow!("call through non-function pointer: {:?}", other)),
+                    },
+                    other => Err(anyhow!("call through non-pointer expression: {:?}", other)),
+                }
+            }
+
             Expr::Cast { ty, expr } => {
                 let _ = self.type_expr(expr)?; // ensure expr typeable; allow cast to any known type for now
-                Ok(ty.clone())
+                let r = self.resolve_type(ty)?;
+                Ok(r)
             }
             Expr::SizeofType(_ty) => Ok(Type::Int),
             Expr::SizeofExpr(e) => { let _ = self.type_expr(e)?; Ok(Type::Int) }
@@ -471,6 +755,7 @@ impl Sema {
                     Expr::Ident(name) => self.lookup(name).ok_or_else(|| anyhow!("compound assign to undeclared identifier: {}", name)),
                     Expr::Unary { op: UnaryOp::Deref, expr } => {
                         let pt = self.type_expr(expr)?;
+                        let pt = self.resolve_type(&pt)?;
                         if let Type::Pointer(inner) = pt { Ok(*inner) } else { Err(anyhow!("compound assign to non-pointer deref")) }
                     }
                     _ => Err(anyhow!("invalid compound assignment target"))
@@ -480,16 +765,19 @@ impl Sema {
                 let _ct = self.type_expr(cond)?;
                 let tt = self.type_expr(then_e)?;
                 let et = self.type_expr(else_e)?;
-                // simple unification: prefer int if both ints; pointer if both pointer (ignore base mismatch)
-                if is_integer(&tt) && is_integer(&et) { Ok(Type::Int) }
-                else if is_pointer(&tt) && is_pointer(&et) { Ok(tt) }
-                else { Ok(Type::Int) }
+                let tt = self.resolve_type(&tt)?;
+                let et = self.resolve_type(&et)?;
+                if let Some(t) = cond_result_type(&tt, &et) { return Ok(t); }
+                if is_pointer(&tt) && is_pointer(&et) { return Ok(tt); }
+                Ok(Type::Int)
             }
 
             Expr::Index { base, index } => {
                 // a[i] where a is pointer-to-T or array-of-T and i is integer
                 let bt = self.type_expr(base)?;
+                let bt = self.resolve_type(&bt)?;
                 let it = self.type_expr(index)?;
+                let it = self.resolve_type(&it)?;
                 if !is_integer(&it) {
                     return Err(anyhow!("array subscript is not an integer"));
                 }
@@ -503,6 +791,7 @@ impl Sema {
             // Member access: resolve via record layouts if available
             Expr::Member { base, field, arrow } => {
                 let bt = self.type_expr(base)?;
+                let bt = self.resolve_type(&bt)?;
                 // Determine record kind and tag
                 let (is_union, tag) = match (arrow, bt) {
                     (false, Type::Struct(t)) => (false, t),
@@ -548,7 +837,51 @@ impl Sema {
 /// Currently permissive and aims not to reject code used by existing tests.
 pub fn check_translation_unit(tu: &TranslationUnit) -> Result<()> {
     let mut sema = Sema::from_tu(tu);
-    sema.check_tu(tu)
+    sema.check_tu(tu)?;
+    // Additional pass: labels/goto validation
+    check_labels_goto(tu)?;
+    Ok(())
+}
+
+/// Collect labels and gotos within a list of statements.
+fn collect_labels_gotos(stmts: &[Stmt], labels: &mut HashSet<String>, gotos: &mut Vec<String>) -> Result<()> {
+    for s in stmts {
+        match s {
+            Stmt::Block(inner) => collect_labels_gotos(inner, labels, gotos)?,
+            Stmt::If { then_branch, else_branch, .. } => {
+                collect_labels_gotos(then_branch, labels, gotos)?;
+                if let Some(eb) = else_branch { collect_labels_gotos(eb, labels, gotos)?; }
+            }
+            Stmt::While { body, .. } => collect_labels_gotos(body, labels, gotos)?,
+            Stmt::DoWhile { body, .. } => collect_labels_gotos(body, labels, gotos)?,
+            Stmt::For { body, .. } => collect_labels_gotos(body, labels, gotos)?,
+            Stmt::Switch { body, .. } => collect_labels_gotos(body, labels, gotos)?,
+            Stmt::Case { .. } | Stmt::Default => { /* switch labels handled in another pass */ }
+            Stmt::Label(name) => {
+                if !labels.insert(name.clone()) {
+                    return Err(anyhow!("duplicate label: {}", name));
+                }
+            }
+            Stmt::Goto(name) => { gotos.push(name.clone()); }
+            Stmt::Break | Stmt::Continue | Stmt::Return(_) | Stmt::Decl { .. } | Stmt::Typedef { .. } | Stmt::ExprStmt(_) => { /* no-op */ }
+        }
+    }
+    Ok(())
+}
+
+/// Public: verify per-function that all goto targets exist and labels are unique.
+pub fn check_labels_goto(tu: &TranslationUnit) -> Result<()> {
+    for f in &tu.functions {
+        let mut labels: HashSet<String> = HashSet::new();
+        let mut gotos: Vec<String> = Vec::new();
+        collect_labels_gotos(&f.body, &mut labels, &mut gotos)?;
+        for g in gotos {
+            if !labels.contains(&g) {
+                return Err(anyhow!("undefined label: {}", g));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Placeholder for expression type inference (will use symbol tables in future).
@@ -678,5 +1011,209 @@ mod tests {
         assert_eq!(m.get("A").copied(), Some(1));
         assert_eq!(m.get("B").copied(), Some(2));
         assert_eq!(m.get("C").copied(), Some(5));
+    }
+
+    // ===== Labels/Goto tests =====
+    #[test]
+    fn labels_goto_forward_ok() {
+        let src = r#"
+            int main(void){ goto L; L: return 0; }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("labels/goto forward ok");
+    }
+
+    #[test]
+    fn labels_goto_backward_ok() {
+        let src = r#"
+            int main(void){ L: return 1; goto L; }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("labels/goto backward ok");
+    }
+
+    #[test]
+    fn labels_goto_undefined_err() {
+        let src = r#"
+            int main(void){ goto M; L: return 0; }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("should error on undefined label");
+        assert!(format!("{}", err).contains("undefined label: M"));
+    }
+
+    #[test]
+    fn labels_goto_duplicate_err() {
+        let src = r#"
+            int main(void){ L: return 0; L: return 1; }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("should error on duplicate label");
+        assert!(format!("{}", err).contains("duplicate label: L"));
+    }
+
+    #[test]
+    fn labels_goto_nested_block_ok() {
+        let src = r#"
+            int f(void){ { L: ; } goto L; return 0; }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("function-scoped labels ok");
+    }
+
+    // ===== Function prototype and call checking tests =====
+    #[test]
+    fn call_arity_too_few_args_errors() {
+        let src = r#"
+            int f(int a, int b) { return 0; }
+            int main(void) { return f(1); }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("should error on too few args");
+        let s = err.to_string();
+        assert!(s.contains("too few") || s.contains("arity"));
+    }
+
+    #[test]
+    fn call_arity_too_many_args_errors() {
+        let src = r#"
+            int f(int a) { return 0; }
+            int main(void) { return f(1, 2); }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("should error on too many args");
+        let s = err.to_string();
+        assert!(s.contains("arity") || s.contains("too"));
+    }
+
+    #[test]
+    fn call_type_mismatch_in_fixed_param_errors() {
+        let src = r#"
+            int f(int a, int b) { return a + b; }
+            int main(void) { int x; int *p = &x; return f(p, 2); }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("should error on type mismatch");
+        assert!(format!("{}", err).contains("type mismatch"));
+    }
+
+    #[test]
+    fn variadic_allows_extra_arguments() {
+        let src = r#"
+            int v(int a, ...) { return a; }
+            int main(void) { return v(1, 2, 3); }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("variadic extra ok");
+    }
+
+    #[test]
+    fn variadic_fixed_part_type_mismatch_errors() {
+        let src = r#"
+            int v(int a, ...) { return a; }
+            int main(void) { int *p = 0; return v(p, 2); }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("should error on fixed arg type mismatch");
+        assert!(format!("{}", err).contains("type mismatch"));
+    }
+
+    #[test]
+    fn builtin_printf_requires_pointer_first_param() {
+        let src = r#"
+            int main(void) { return printf(1); }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("printf first arg must be pointer");
+        let s = err.to_string();
+        assert!(s.contains("type mismatch") || s.contains("expected Pointer"));
+    }
+
+    #[test]
+    fn builtin_puts_accepts_string_literal() {
+        let src = r#"
+            int main(void) { return puts("hi"); }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("puts ok");
+    }
+
+    // ===== Typedef resolution tests =====
+    #[test]
+    fn typedef_basic_alias() {
+        let src = r#"
+            int main(void) {
+                typedef int I; I x; x = 3; return x;
+            }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("typedef basic alias ok");
+    }
+
+    #[test]
+    fn typedef_pointer_alias_and_arith() {
+        let src = r#"
+            int main(void) {
+                int x; typedef int* P; P p = &x; p = p + 1; return 0;
+            }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("typedef pointer alias ok");
+    }
+
+    #[test]
+    fn typedef_struct_alias_and_member() {
+        let src = r#"
+            int main(void) {
+                typedef struct S { int a; } S; S s; s.a = 1; return 0;
+            }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("typedef struct alias ok");
+    }
+
+    #[test]
+    fn typedef_array_alias_and_index() {
+        let src = r#"
+            int main(void) {
+                typedef int A[10]; A a; a[1] = 2; return 0;
+            }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("typedef array alias ok");
+    }
+
+    #[test]
+    fn typedef_shadowing_allows_inner_redefinition() {
+        let src = r#"
+            int main(void) {
+                typedef int I; { typedef unsigned int I; I y; } I x; return 0;
+            }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        check_translation_unit(&tu).expect("typedef shadowing ok");
+    }
+
+    #[test]
+    fn typedef_same_scope_redefinition_errors() {
+        let src = r#"
+            int main(void) {
+                typedef int I; typedef int I; return 0;
+            }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("redefinition in same scope should error");
+        assert!(format!("{}", err).contains("redefinition of typedef I"));
+    }
+
+    #[test]
+    fn unknown_typedef_name_in_decl_errors() {
+        let src = r#"
+            int main(void) { T x; return 0; }
+        "#;
+        let tu = parse::parse_translation_unit(src).expect("parse ok");
+        let err = check_translation_unit(&tu).expect_err("unknown typedef in decl should error");
+        let s = err.to_string();
+        assert!(s.contains("unknown typedef name") || s.contains("unknown"));
     }
 }

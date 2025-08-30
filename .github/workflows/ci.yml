@@ -3,23 +3,65 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test-linux:
+    needs: [lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install LLVM 18 toolchain
         run: |
           sudo apt-get update -y
           sudo apt-get install -y llvm-18 llvm-18-tools clang-18 lld-18
           echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - uses: Swatinem/rust-cache@v2
       - name: Test
-        run: WYRMC_CLANG=/usr/lib/llvm-18/bin/clang-18 cargo test --workspace
+        env:
+          WYRMC_CLANG: /usr/lib/llvm-18/bin/clang-18
+          WYRMC_LLC: /usr/lib/llvm-18/bin/llc-18
+          WYRMC_TIMEOUT_SECS: "20"
+        run: cargo test --workspace -- --test-threads=1
+
+  test-macos:
+    needs: [lint]
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install LLVM 18 toolchain
+        run: |
+          brew update
+          brew install llvm@18
+          prefix="$(brew --prefix llvm@18)"
+          echo "LLVM_SYS_180_PREFIX=$prefix" >> $GITHUB_ENV
+          echo "$prefix/bin" >> $GITHUB_PATH
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: |
+          prefix="${LLVM_SYS_180_PREFIX:-$(brew --prefix llvm@18)}"
+          export WYRMC_CLANG="$prefix/bin/clang-18"
+          export WYRMC_LLC="$prefix/bin/llc-18"
+          export WYRMC_TIMEOUT_SECS=20
+          cargo test --workspace -- --test-threads=1

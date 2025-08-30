@@ -1,9 +1,22 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)
+]
 pub enum Type {
-    Int,
+    // C89 integer kinds
+    Char,       // plain char (implementation-defined signedness; treat as signed for now)
+    SChar,      // signed char
+    UChar,      // unsigned char
+    Short,      // short
+    UShort,     // unsigned short
+    Int,        // int
+    UInt,       // unsigned int
+    Long,       // long
+    ULong,      // unsigned long
+
     Void,
     Pointer(Box<Type>),
     Array(Box<Type>, usize),
+    // Function type (for function pointers and prototypes)
+    Func { ret: Box<Type>, params: Vec<Type>, variadic: bool },
     // C89 aggregate and named types (tags and typedef-names)
     Struct(String),
     Union(String),
@@ -65,7 +78,10 @@ pub enum Expr {
     Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr> },
     Assign { name: String, value: Box<Expr> },
     AssignDeref { ptr: Box<Expr>, value: Box<Expr> },
+    // Direct call by name
     Call { callee: String, args: Vec<Expr> },
+    // Indirect call via expression (function pointer)
+    CallPtr { target: Box<Expr>, args: Vec<Expr> },
 
     // Array indexing a[i]
     Index { base: Box<Expr>, index: Box<Expr> },
@@ -91,6 +107,16 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Qualifiers {
+    pub is_const: bool,
+    pub is_volatile: bool,
+}
+
+impl Qualifiers {
+    pub fn none() -> Self { Self { is_const: false, is_volatile: false } }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     // Control-flow and block forms
     Block(Vec<Stmt>),
@@ -106,11 +132,16 @@ pub enum Stmt {
     Case { value: Expr },
     Default,
 
+    // Goto and labels
+    Label(String),
+    Goto(String),
+
     // Existing forms
     Return(Expr),
     // typedef declaration (no runtime effect)
     Typedef { name: String, ty: Type },
-    Decl { name: String, ty: Type, init: Option<Expr> },
+    // Local declaration (now includes storage/qualifiers)
+    Decl { name: String, ty: Type, init: Option<Expr>, storage: Option<Storage>, quals: Qualifiers },
     ExprStmt(Expr),
 }
 
@@ -119,9 +150,11 @@ pub struct Function {
     pub name: String,
     pub ret_type: Type,
     pub params: Vec<Param>,
+    pub variadic: bool,
     pub body: Vec<Stmt>,
+    // New: optional storage for functions (e.g., static internal linkage)
+    pub storage: Option<Storage>,
 }
-
 // New: Top-level definitions captured from inline or tagged definitions
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordKind { Struct, Union }
@@ -150,6 +183,7 @@ pub struct Global {
     pub ty: Type,
     pub init: Option<Expr>,
     pub storage: Option<Storage>,
+    pub quals: Qualifiers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

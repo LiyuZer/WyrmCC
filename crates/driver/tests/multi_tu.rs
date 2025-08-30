@@ -115,3 +115,70 @@ fn link_extern_global_across_tus() {
         .unwrap_or(1);
     assert_eq!(code, 7, "program exit code was {code}, expected 7");
 }
+
+#[test]
+fn static_globals_no_conflict() {
+    let (clang, llc) = llvm_tools();
+
+    let dir = tempdir().unwrap();
+    let tu1 = dir.path().join("tu1.c");
+    let tu2 = dir.path().join("tu2.c");
+    let tu3 = dir.path().join("main.c");
+
+    // TU1: file-scope static g=1, export f1()
+    let mut f1 = fs::File::create(&tu1).unwrap();
+    writeln!(f1, "static int g = 1; int f1(void) {{ return g; }}").unwrap();
+
+    // TU2: file-scope static g=41, export f2()
+    let mut f2 = fs::File::create(&tu2).unwrap();
+    writeln!(f2, "static int g = 41; int f2(void) {{ return g; }}").unwrap();
+
+    // TU3: main calls both f1 and f2; should return 42 if statics are independent
+    let mut f3 = fs::File::create(&tu3).unwrap();
+    writeln!(f3, "extern int f1(void); extern int f2(void); int main(void) {{ return f1() + f2(); }}").unwrap();
+
+    // Compile objects
+    let o1 = dir.path().join("tu1.o");
+    let mut c1 = Command::cargo_bin("wyrmcc").unwrap();
+    c1.env("WYRMC_CLANG", clang)
+        .env("WYRMC_LLC", llc)
+        .args(["build", "-c", "-o", o1.to_string_lossy().as_ref(), tu1.to_string_lossy().as_ref()]);
+    c1.assert().success();
+
+    let o2 = dir.path().join("tu2.o");
+    let mut c2 = Command::cargo_bin("wyrmcc").unwrap();
+    c2.env("WYRMC_CLANG", clang)
+        .env("WYRMC_LLC", llc)
+        .args(["build", "-c", "-o", o2.to_string_lossy().as_ref(), tu2.to_string_lossy().as_ref()]);
+    c2.assert().success();
+
+    let o3 = dir.path().join("main.o");
+    let mut c3 = Command::cargo_bin("wyrmcc").unwrap();
+    c3.env("WYRMC_CLANG", clang)
+        .env("WYRMC_LLC", llc)
+        .args(["build", "-c", "-o", o3.to_string_lossy().as_ref(), tu3.to_string_lossy().as_ref()]);
+    c3.assert().success();
+
+    // Link all three
+    let exe = dir.path().join("a.out");
+    let status = Command::new(clang)
+        .args([
+            "-no-pie",
+            o1.to_string_lossy().as_ref(),
+            o2.to_string_lossy().as_ref(),
+            o3.to_string_lossy().as_ref(),
+            "-o",
+            exe.to_string_lossy().as_ref(),
+        ])
+        .status()
+        .expect("failed to link with clang");
+    assert!(status.success(), "clang link failed: {status}");
+
+    // Run and assert exit code 42 (1 + 41)
+    let code = Command::new(&exe)
+        .status()
+        .expect("failed to run a.out")
+        .code()
+        .unwrap_or(1);
+    assert_eq!(code, 42, "program exit code was {code}, expected 42");
+}

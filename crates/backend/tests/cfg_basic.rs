@@ -13,14 +13,16 @@ fn if_else_ir_patterns() {
             name: "main".into(),
             ret_type: Type::Int,
             params: vec![],
+            variadic: false,
             body: vec![
-                Stmt::Decl { name: "x".into(), ty: Type::Int, init: Some(Expr::IntLiteral("1".into())) },
+                Stmt::Decl { name: "x".into(), ty: Type::Int, init: Some(Expr::IntLiteral("1".into())), storage: None, quals: Qualifiers::none() },
                 Stmt::If {
                     cond: Expr::Ident("x".into()),
                     then_branch: vec![Stmt::Return(Expr::IntLiteral("2".into()))],
                     else_branch: Some(vec![Stmt::Return(Expr::IntLiteral("3".into()))]),
                 },
             ],
+            storage: None,
         }],
         records: vec![],
         enums: vec![],
@@ -43,8 +45,9 @@ fn while_break_continue_patterns() {
             name: "main".into(),
             ret_type: Type::Int,
             params: vec![],
+            variadic: false,
             body: vec![
-                Stmt::Decl { name: "i".into(), ty: Type::Int, init: Some(Expr::IntLiteral("0".into())) },
+                Stmt::Decl { name: "i".into(), ty: Type::Int, init: Some(Expr::IntLiteral("0".into())), storage: None, quals: Qualifiers::none() },
                 Stmt::While {
                     cond: Expr::Binary {
                         op: BinaryOp::Lt,
@@ -92,6 +95,7 @@ fn while_break_continue_patterns() {
                 },
                 Stmt::Return(Expr::Ident("i".into())),
             ],
+            storage: None,
         }],
         records: vec![],
         enums: vec![],

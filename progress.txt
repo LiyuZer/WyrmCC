@@ -1,110 +1,234 @@
-WyrmCC C89 Compiler – Progress Summary
+[2025-08-30] Status and Plan
 
-Current status
-- All workspace tests pass under a guarded run: cargo test --workspace -- --nocapture --test-threads=1 (run with a global timeout in CI/use).
-- Prior hang root cause: unsafe constant folding inside loops. Fixed by disabling const folding within loops and correcting loop context; pointer stores now invalidate const caches. Guarded by regressions.
-- Repo hygiene: removed nested .git directories under crates/ (single VCS root). Backup archive kept locally.
-- New since last update: multi-translation-unit linking basics implemented and tested (cross-TU function calls and extern globals); globals emission for int, zero-init, and pointer-to-string forms working with sema constant-expression checks; struct/union member access (dot/arrow) backed by computed layouts; backend call lowering declares externs only when needed; lightweight IR text verifier added and covered by tests.
-- Current focus: struct/union/enum codegen and layout tightening (size/align/offset parity, field access) with expanded tests; then usual arithmetic conversions/promotions; broader arrays/decay contexts; variadics; and preprocessor conditionals and function-like macros.
+Completed (current repo state)
+- printf integrated in backend: single consolidated call arm; auto-declares `declare i32 @printf(ptr, ...)`; passes format and pointer args as `ptr`, integers as `i32`.
+- Ternary (?:) lowered via branches with join block (alloca/store/br/load) to satisfy cond tests.
+- Cleanup: removed duplicated fragments in emit_expr; fixed casts and brace mismatches.
+- Test suites green:
+  - Backend IR tests all pass, including new printf vararg-typing test.
+  - Driver runtime tests added for printf: basic, multiple args, hex (%x/%X), unsigned (%u), pointer (%p), and mixed formats — all pass via wyrmcc run pipeline.
 
-What’s implemented and covered by tests today
-Driver/CLI
-- Build, run, and link small programs end-to-end.
-- Emits assembly (-S), compile-only objects (-c), and links executables (using -no-pie on Linux). CLI help works.
+Next Work
+1) Expand printf coverage (tests only; functionality relies on system libc):
+   - Add driver tests covering common flags/width/precision:
+     - Zero pad width: printf("%05d\n", 7) -> 00007
+     - Left-justify: printf("%-6dX\n", 7) -> "7     X"
+     - Plus sign for positives: printf("%+d\n", 7) -> +7
+     - Space flag: printf("% d\n", 7) ->  7
+     - Alternate form for hex: printf("%#x %#X\n", 255, 255) -> 0xff 0XFF
+     - Precision on strings: printf("%.3s\n", "hello") -> hel
+     - Literal percent: printf("%%\n") -> %
+   - Keep tests in crates/driver/tests using the existing harness (assert_cmd, predicates). No backend changes expected.
 
-Lexer (lex)
-- Identifiers; keywords (if/else/while/for/do/return, typedef, struct/union/enum, sizeof, switch/case/default, etc.).
-- Punctuators/operators (++, --, compound assigns, shifts, bitwise, logical ops, comma).
-- Literals: integers, chars (escapes incl. hex/octal), strings with escapes.
+2) Next feature (compiler/backend): pointer subtraction (ptr - ptr)
+   - Semantics (C89 subset): When both operands are pointers to the same element type (initially support int), result is (difference in elements) in i32 (ptrdiff_t surrogate). For now, limit to pointers to int; future work can generalize via sizeof(element).
+   - Backend lowering sketch:
+     - Compute ptrtoint for both pointers to i64, subtract, divide by element size (4 for int) to produce i32.
+     - Ensure unsigned/overflow behavior is not UB for well-formed inputs (same array/object).
+   - Tests to add:
+     - Backend IR test: confirm `ptrtoint`, `sub`, `sdiv 4` (or arithmetic sequence producing i32 result) are present.
+     - Driver runtime test: create two pointers into the same int array and return (p2 - p1); expect correct element count.
 
-Parser (parse)
-- Declarations: int and pointer types, typedefs, parameter lists (including void parameter list).
-- Control flow: if/else, while, do-while, for, break, continue; switch with case/default labels and fallthrough.
-- Expressions: assignments (including compound), logical &&/||/!, calls, address-of (&) and dereference (*), indexing [], conditional operator (?:), comma operator, casts, sizeof(type)/sizeof(expr).
-- Syntax for struct/union/enum (parsing present; codegen separately tracked below).
-- Function prototypes (extern int f(int x);) parsed.
-
-Sema (sema)
-- sizeof for int and pointer types; basic alignment checks; arrays sizeof/align consistent with target assumptions.
-- Address/deref validation; pointer arithmetic basics; TU sanity checks.
-- Switch validations: integer condition; case labels must be integer constants (literal-only for now); unique case values; at most one default.
-- do-while: condition type-checked; body checked like while/for.
-- Globals/initializers: constant-expression checking for simple statics (integer constants and pointer-to-string forms); rejects non-constant initializers.
-- Record layout (struct/union) computation used by backend; basic enum value computation.
-
-IR utilities (ir)
-- IR builder and a lightweight text verifier (backend::verify_llvm_text): detects invalid CFG patterns (multiple terminators, missing terminators, branches to undefined labels, instructions after terminators). Covered by tests.
-
-Backend codegen (backend)
-- Locals: allocas, loads/stores; integer arithmetic (+, -, *), shifts, bitwise ops, comparisons.
-- Control flow: if/else; while/for loops; do-while (at-least-once semantics); switch/case/default dispatch with explicit fallthrough and break; correct loop structure and branch targets.
-- Conditional operator (?:) lowered via branching to then/else blocks with a joined result slot.
-- Comma operator sequencing: evaluates LHS for side effects, yields RHS value.
-- Function parameters and calls; special-cased puts for string pointers; emits external declares for calls only when not already defined.
-- Pointers: address-of, deref, load/store through pointers; aliasing invalidates constant cache.
-- ++/-- (pre/post) for identifiers and pointer dereferences; several compound assignments lowered.
-- Arrays: local [N x i32] allocas and indexing; array identifiers decay to pointers in rvalue contexts; pointer arithmetic (+/- int) via GEP; sizeof(array) uses declared type (no decay); sizeof(expr) refined.
-- Casts: basic int<->ptr (inttoptr/ptrtoint) and ptr->ptr (bitcast) lowering heuristics.
-- Strings: global string emission, GEP indexing fixed, correct escaping; puts call emission works.
-- Members: struct/union member access via dot/arrow using precomputed record layouts; union overlay accesses use offset-0 GEP.
-- Globals: emission for i32, zero-initialized, and pointer-to-string globals.
-
-Regression and run-time tests (representative)
-- IR-shape tests for conditionals, loops (while/for/do-while), inc/dec, assign-ops, pointers, strings, switch dispatch/fallthrough/break, comma, and conditional operator.
-- Arrays tests: local arrays, indexing, array-to-pointer decay, sizeof(array) vs sizeof(pointer), pointer arithmetic via GEP.
-- Casts tests: int<->ptr and ptr->ptr IR patterns.
-- Members tests: struct dot/arrow load/store; basic union overlay.
-- Globals tests: int emission, pointer-to-string global, and zero-init.
-- Multi-TU tests: compile two TUs, link, and run; extern globals treated as external; cross-TU calls succeed.
-- Verifier tests: invalid CFG patterns flagged by backend::verify_llvm_text.
-- Run tests: arithmetic, control flow, params, pointers, puts; explicit infinite-loop timeout test.
-- Parser coverage: control flow (incl. do-while and switch), declarations/typedefs, pointers, structs/unions/enums syntax, sizeof, calls, casts, comma, arrays/indexing, prototypes.
-- Lexer coverage: keywords, control-flow tokens, literals and escapes.
-
-What remains for a fully functioning C89 compiler
-Control flow
-- goto and labels: label resolution, safe terminator placement, forward/backward jumps.
-
-Expressions and conversions
-- Casts and integer promotions/usual arithmetic conversions (signed/unsigned paths; trunc/zext/sext rules); pointer-int cast rules beyond current basics.
-
-Types, storage, and aggregates
-- Storage classes/linkage: static, extern, internal vs external linkage; static locals; cross-TU resolution.
-- Qualifiers: const (enforce no modification), basic volatile semantics (volatile loads/stores in IR).
-- Arrays and pointer decay in additional contexts; multi-dimensional arrays; generalized GEP-based codegen and element types beyond i32.
-- Struct/union/enum codegen and layout using target DataLayout; field access and alignment; enum constant evaluation.
-- Globals and initializers: extend constant expression evaluation for static storage (beyond current literals/string-pointer forms); strings/arrays/pointers in complex initializers.
-- Tentative definitions and common symbols; one-definition rules across TUs.
-
-Functions and ABI
-- Variadic functions (calls and definitions; printf smoke tests).
-- K&R (old-style) function definitions and interactions with prototypes.
-- Returning aggregates per target ABI (small struct returns).
-- Target/ABI fidelity: default calling convention = C, sizeof/align parity with system toolchain; record layout parity checks.
-
-Preprocessor completeness
-- #include search paths; object-like and function-like macros; #undef; line continuations.
-- Conditionals: #if/#elif/#else/#endif, #ifdef/#ifndef, defined(), integer constant expression eval.
-- Operators: stringification (#) and token pasting (##). Include cycle handling and header guards.
-
-Driver and tooling
-- Full flag surface: -E, -S, -c, -o, -I, -D, -U, -L, -l, -O0, -g; target triple and DataLayout plumbed through.
-- CI matrix (Linux/macOS), fuzzing for lexer/parser, coverage reports. Guarded test runs with timeouts in CI.
-
-Guardrails to prevent regressions/infinite loops
-- Keep loop-const-folding disabled in hot loops; maintain regression tests for while/for/do-while non-const-folding.
-- Ensure pointer stores invalidate constant caches; add property tests for loop progress.
-- Continue running tests with single-thread and global timeout in CI.
-
-Near-term milestone order
-1) Struct/union/enum codegen and layout (+ tests)
-2) Usual arithmetic conversions and promotions (+ tests)
-3) Arrays + pointer decay in broader contexts (+ tests)
-4) Variadic functions (+ tests)
-5) Preprocessor conditionals and function-like macros (+ tests)
-6) Driver feature parity/flags (+ tests)
-7) CI, fuzzing, and coverage
+Execution Checklist
+- [ ] Add driver tests for printf flags/width/precision listed above; run `cargo test -p wyrmcc`.
+- [ ] Add backend IR + driver runtime tests for pointer subtraction; run `cargo test -p backend` and `cargo test -p wyrmcc`.
+- [ ] Implement ptr - ptr lowering in backend if tests require it; re-run suites until green.
 
 Notes
-- Multi-TU linking basics and basic globals emission are in place; extend constant-expression coverage for static storage in a later pass.
-- Member access for records is functional for basic cases; arrays-of-structs, typed GEP scaling, and ABI-related struct returns are intentionally deferred.
+- printf coverage expansion leverages libc; no compiler changes unless arg typing issues surface (current scheme: ints=i32, pointers=ptr).
+- Pointer subtraction: start with pointers to int only; extend later as type system matures.
+
+[2025-08-30] Progress Update
+
+Summary (since last update):
+- Backend
+  - Cleaned and consolidated Expr::Call with puts/printf/generic handling.
+  - Integrated printf: declare i32 @printf(ptr, ...); typed args (ptr for format/pointers, i32 for ints).
+  - Implemented ternary (?:) via branch-and-join (alloca result, br i1 then/else, join load).
+  - Implemented pointer subtraction (ptr - ptr) -> element difference using ptrtoint and divide by element size.
+  - Function-scope static locals implemented (internal globals @__static_<fn>_<name>), including pointer initializers from string/null.
+  - Global emission/linkage: deduplication and priority (definition > tentative > extern).
+  - All backend tests green (printf IR, cond lowering, ptr-sub, arrays, structs/unions, loops, switch, variadics, etc.).
+- Sema
+  - TU-level linkage checks in place: extern decl-only allowed; extern with initializer errors; multiple tentatives allowed; duplicate definitions are errors. Tests pass.
+- Driver
+  - Added and validated runtime tests for printf (wyrmcc): mixed ints/pointers/hex/unsigned/pointers. All pass end-to-end with system toolchain.
+
+Next Focus (toward full C89): Phase 2.1 – Function Prototypes and Call Checking
+- Goal: Enforce prototype signatures, arity/type checks (including variadics), and apply usual arithmetic conversions at call sites.
+- Plan:
+  1) Extend sema function symbol table: parameter types, variadic flag, and prototype vs definition tracking.
+  2) At call sites, check:
+     - Too few/many args -> diagnostic.
+     - Type mismatch in fixed params -> diagnostic.
+     - Variadic calls: fixed param checks; allow extra args with default argument promotions.
+  3) Apply integer promotions/usual arithmetic conversions for arguments as needed (staged coverage).
+- Tests to add now (sema):
+  - Too few args, too many args.
+  - Type mismatch (e.g., int expected, ptr given).
+  - Variadic: fixed part checked; extras permitted; mismatch in fixed part rejected.
+  - Smoke compile remains unchanged in backend.
+
+Notes toward full C89 roadmap
+- Upcoming: 2.2 Typedef resolution across scopes; 1.x integer model + promotions breadth; 3.x aggregate initializers; 4.x function pointers/indirect calls; 6.x minimal CPP integration via driver.
+
+[2025-08-30] Sema Prototype/Call Checking
+- Implemented function signatures (incl. built-ins puts, printf); enforced arity and fixed-arg type checks with array-to-pointer decay; variadics accepted after fixed part.
+- Added sema tests (too few/many args, fixed-arg type mismatch, variadic behavior, built-ins); all passing.
+- Backend remains green (printf integrated, ternary via branches, ptr - ptr subtraction).
+Next: Phase 2.2 – Typedef resolution across scopes (tests first, then implementation).
+
+[2025-08-30] Sync And Tests Status
+- Workspace fully green after fixing Sema::from_tu call.
+- Parser: added support for typedef array declarators (e.g., `typedef int A[10];`) and for parsing declarations that use unknown typedef-names (e.g., `T x;`) so sema can emit proper diagnostics.
+- Sema: prototypes/call checking (arity, type checks, variadics), typedef resolution across scopes, and labels/goto checks are implemented; tests pass.
+- Driver printf coverage: the flags/width/precision tests already exist and pass (see `crates/driver/tests/run_printf_flags.rs`), along with hex/pointer/mixed/unsigned tests.
+
+Checklist status
+- [x] Expand printf coverage (flags/width/precision) — done; see `run_printf_flags.rs`.
+- [x] Pointer subtraction — implemented; tests pass.
+
+Next Focus Options
+1) Function pointers and indirect calls: add parsing for function pointer declarators (AST type support), sema typing for calls via pointers, backend lowering for indirect calls; tests (sema + driver).
+2) Aggregate initializers (minimal): support simple brace initializers for arrays/structs in parser/sema; backend emission for zero-inits and simple lists; tests.
+3) Broaden integer promotions/usual arithmetic conversions tests: extend coverage matrices across signed/unsigned and widths; sema-only tests plus a few runtime checks.
+
+Awaiting selection; ready to proceed.
+
+[2025-08-30] Roadmap And Master Checklist (Full C89 Focus)
+
+Status Snapshot
+- Workspace green (parse, lex, sema, backend, driver, pp tests passing).
+- Sema: prototypes/call checking (arity, fixed-arg types, variadics), typedef resolution, labels/goto checks — implemented.
+- Backend: printf integrated, ternary via branch-and-join, pointer subtraction, static locals, global linkage — implemented and tested.
+- Driver: runtime tests for printf (incl. flags/width/precision) and others — passing.
+
+Time Estimates (with Eve’s automation)
+- MVP (usable C89 subset; no full PP, floats, bit-fields): 3–6 days
+- Full C89-focused baseline (solid PP, diagnostics, ABI): 2–4 weeks
+- Near-term sequencing:
+  1) Function pointers end-to-end (parser declarators + backend indirect calls + tests): 0.5–1 day
+  2) Declarator grammar generalization (parenthesized + abstract declarators; ptr/array/func combos): 2–4 days
+  3) Aggregate initialization + struct/union assignment + by-value ABI: 4–7 days
+  4) UAC completeness (integers) across operators: 1–2 days
+  5) Preprocessor macros/conditionals/includes: 5–8 days
+  6) Floating point (lexer/types/sema/backend): 2–4 days
+  7) Bit-fields: 5–8 days
+  8) Sema diagnostics completeness (incomplete types, qualifiers, composite type rules): 2–4 days
+  9) Driver/CLI polish (-E/-S/-c/-o, -I/-D/-U, multi-input, link): 1–2 days
+
+Master Checklist (C89-Oriented)
+Legend: [x]=done [ ]=todo [~]=partial/in-progress
+
+A. Lexing/Parsing
+- [x] Integer literals (dec/hex/oct) and char/string literals
+- [x] Core tokens: keywords, punctuators, identifiers
+- [x] Declarations: basic types, pointers, arrays
+- [~] Declarator grammar completeness
+  - [ ] Parenthesized declarators (e.g., int (*p)[10], int (*fp)(int))
+  - [ ] Abstract declarators (casts, parameter types without names)
+  - [ ] Arrays of pointers, pointers to arrays; reject arrays of functions
+  - [ ] Qualifiers on pointers/types (const/volatile) parsed
+  - [ ] Storage classes everywhere (static/extern/register/typedef) parsed
+- [x] Function definitions and prototypes (prototype style)
+- [ ] K&R (old-style) function definitions (optional; decide policy)
+- [x] Struct/union and enum syntax with inline definitions
+- [x] Typedef declarations (including arrays)
+
+B. Preprocessor (pp)
+- [~] Includes and search paths
+  - [~] #include "..." and <...> basic behavior
+  - [ ] -I handling; full system search order
+- [ ] Macros
+  - [ ] Object-like and function-like macros
+  - [ ] Arguments substitution, recursion guard
+  - [ ] Stringize (#) and paste (##)
+  - [ ] Undef (#undef), redefinition rules
+- [ ] Conditionals
+  - [ ] #if/#elif/#else/#endif with const-expr evaluator (incl. defined operator)
+  - [ ] #ifdef/#ifndef
+  - [ ] #error, #line (passthrough), #pragma passthrough
+- [ ] Integration with driver (-E), and with parser/sema pipeline
+
+C. Semantics (Sema)
+- [x] Prototypes and call checking (arity, fixed-arg types)
+- [x] Variadics: fixed part checks; extra args accepted
+- [~] Function pointers
+  - [x] Expr::CallPtr typing
+  - [ ] Function designators decay to pointer at use sites
+  - [ ] Type compatibility between function types
+- [x] Typedef resolution across scopes (shadowing, errors)
+- [x] Labels/goto checks (unique, target exists)
+- [~] Usual arithmetic conversions (integers)
+  - [x] Promotions and integer mixes for key ops
+  - [ ] Full matrix across signed/unsigned widths for all operators (arith, compare, shift, ?:)
+- [~] Pointers/arrays
+  - [x] Pointer arithmetic basics (+/- with int; ptr - ptr -> int surrogate)
+  - [ ] Scale by sizeof(element) for all types consistently in backend
+  - [ ] Void* compatibility rules; null pointer constants (0, (void*)0)
+  - [ ] Pointer comparisons and qualifiers discard diagnostics
+- [ ] Incomplete types rules (forward-declared structs/unions; arrays with unspecified size in externs)
+- [ ] Composite type rules for repeated declarations & linkage
+- [ ] Lvalue/rvalue and modifiable lvalue checks; ++/-- and compound assign rules
+- [ ] Qualifiers (const/volatile) rules in assignments/params
+- [ ] Constant expression evaluation breadth (for enums, globals, #if)
+
+D. Initializers and Aggregates
+- [ ] Brace initializers for arrays/structs/unions (nested)
+- [ ] String literal to char array with size inference
+- [ ] Zero-initialization semantics
+- [ ] Struct/union assignment semantics
+- [ ] Aggregate parameter passing/return-by-value checks in sema
+
+E. Backend/Codegen (LLVM IR)
+- [x] Direct calls; builtin puts/printf integration
+- [ ] Indirect calls via function pointers (bitcast callee as needed)
+- [x] Conditional operator lowering (branch-and-join)
+- [x] Pointer subtraction lowering (ptrtoint/sub/div size)
+- [~] Pointer arithmetic scaling by element size (general)
+- [ ] Aggregate handling
+  - [ ] Struct/union assignment lowering (memcpy)
+  - [ ] By-value parameter passing/return per SysV x86_64 ABI (sret/expansion where needed)
+- [ ] Varargs lowering details (default promotions; IR call varargs)
+- [ ] Integer casts and ops correctness (sext/zext/trunc; signed/unsigned div/mod; shifts)
+- [ ] Floating point types/ops (float/double/long double)
+- [ ] Volatile memory ops
+- [ ] Alignment and padding correctness in loads/stores
+
+F. Driver/Tooling
+- [~] CLI options
+  - [ ] -E (pp only), -S (emit IR), -c (object), -o output
+  - [ ] -I/-D/-U; -L/-l; pass-through -O flags
+  - [ ] Multiple inputs and linking with system toolchain
+- [x] Test harness integration (assert_cmd/predicates)
+- [ ] Dependency generation (-M/-MF) optional
+- [ ] Timeouts/resource limits tunables
+
+G. Testing and Conformance
+- [x] Unit tests: lex/parse/sema/backend/driver basic coverage
+- [~] Expand matrices
+  - [ ] Declarators matrix (ptr/array/func combos, parentheses, abstract)
+  - [ ] UAC integer matrix across operators
+  - [ ] Pointer conversions (void*, nulls, qualifiers)
+  - [ ] Function pointers (sema + backend + runtime)
+  - [ ] Aggregates (init/copy/pass/return)
+  - [ ] Floats (lexer, sema, backend arithmetic)
+  - [ ] Bit-fields (layout/access)
+- [ ] Real-world smoke tests (qsort callbacks; small libc-like snippets; string/ctype usage)
+- [ ] Fuzzers (optional) for parser and pp
+
+H. CI/Quality/Docs
+- [x] CI basic workflow
+- [ ] Lints/pedantic profiles; deny warnings in CI (phase-in)
+- [ ] Developer docs: architecture, passes, testing guide
+- [ ] User docs: CLI, examples, supported C subset and caveats
+
+Execution Checklist – Next Actions
+- [ ] Add tests for function pointers end-to-end:
+  - Sema: indirect call arity/type mismatch, array-to-pointer decay in pointer calls
+  - Backend IR: indirect call emission (bitcast if needed)
+  - Driver runtime: call through pointer; switch targets at runtime
+- [ ] Parser: implement parenthesized/abstract declarators sufficient for function pointers
+- [ ] Backend: implement indirect call lowering
+- [ ] Run: cargo test -p parse -p sema -p backend -p wyrmcc until green
+

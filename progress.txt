@@ -61,7 +61,7 @@ Next Focus (toward full C89): Phase 2.1 – Function Prototypes and Call Checkin
   2) At call sites, check:
      - Too few/many args -> diagnostic.
      - Type mismatch in fixed params -> diagnostic.
-     - Variadic calls: fixed param checks; allow extra args with default argument promotions.
+     - Variadic calls: fixed part checks; allow extra args with default argument promotions.
   3) Apply integer promotions/usual arithmetic conversions for arguments as needed (staged coverage).
 - Tests to add now (sema):
   - Too few args, too many args.
@@ -348,3 +348,34 @@ Execution Checklist — Upcoming
 - [ ] Add sema tests for qualifiers propagation; implement as needed
 - [ ] Expand UAC test matrices (sema + a few runtime checks)
 - [ ] Keep suites green: cargo test -p parse -p sema -p backend -p wyrmcc
+
+[2025-08-31] Struct/Union Assignment Via Memcpy — Completed
+- Backend
+  - Lowered struct/union assignments in Expr::Assign and Expr::AssignDeref to `@llvm.memcpy.p0.p0.i64` with sizes derived from record layouts (struct size or max union member size).
+  - Preserves existing int/ptr scalar stores for non-aggregate assignments.
+- Tests
+  - Backend IR: `crates/backend/tests/struct_assign.rs` asserts memcpy is emitted for:
+    - Direct struct copy (`s2 = s1;`) with expected size (e.g., i64 8 for two i32 fields).
+    - Struct copy through pointer deref (`*p = s2;`).
+    - Direct union copy with expected size (e.g., i64 4 for union of ints).
+  - Driver runtime: `crates/driver/tests/run_struct_assign.rs` validates copies end-to-end via wyrmcc run:
+    - Direct copy prints `1 2`.
+    - Pointer copy prints `3 4`.
+- Status
+  - Full workspace remains green across parse, sema, backend, driver, pp.
+- Git
+  - Changes committed and pushed under "Eve the Coding Dragon":
+    - backend: memcpy-based struct/union assignment (95b93b5)
+    - backend tests for memcpy (1aede74)
+    - driver runtime tests for struct assignment (hash in history)
+
+Checklist Delta
+- D. Initializers and Aggregates
+  - [x] Struct/union assignment semantics (validated by sema checks and runtime behavior)
+- E. Backend/Codegen (LLVM IR)
+  - Aggregate handling — Struct/union assignment lowering (memcpy): [x]
+
+Next Focus (unchanged sequence)
+1) Aggregates: brace initializers (parser+sema+backend constants/locals), with tests.
+2) UAC expansion (integers) across operators; broaden sema matrices; add runtime smoke.
+3) Driver CLI breadth (-S/-c/-o, flags) tests; multi-input/linking coverage.

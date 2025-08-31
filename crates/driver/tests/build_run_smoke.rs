@@ -21,15 +21,13 @@ fn build_compile_only_object() {
     let out_o = dir.path().join("out.o");
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
-    cmd.env("WYRMC_CLANG", clang)
-        .env("WYRMC_LLC", llc)
-        .args([
-            "build",
-            "-c",
-            "-o",
-            out_o.to_string_lossy().as_ref(),
-            c_path.to_string_lossy().as_ref(),
-        ]);
+    cmd.env("WYRMC_CLANG", clang).env("WYRMC_LLC", llc).args([
+        "build",
+        "-c",
+        "-o",
+        out_o.to_string_lossy().as_ref(),
+        c_path.to_string_lossy().as_ref(),
+    ]);
 
     cmd.assert().success();
 
@@ -50,15 +48,13 @@ fn build_emit_assembly() {
     let out_s = dir.path().join("out.s");
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
-    cmd.env("WYRMC_CLANG", clang)
-        .env("WYRMC_LLC", llc)
-        .args([
-            "build",
-            "-S",
-            "-o",
-            out_s.to_string_lossy().as_ref(),
-            c_path.to_string_lossy().as_ref(),
-        ]);
+    cmd.env("WYRMC_CLANG", clang).env("WYRMC_LLC", llc).args([
+        "build",
+        "-S",
+        "-o",
+        out_s.to_string_lossy().as_ref(),
+        c_path.to_string_lossy().as_ref(),
+    ]);
 
     cmd.assert().success();
 

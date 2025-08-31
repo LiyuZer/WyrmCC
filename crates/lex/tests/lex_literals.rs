@@ -1,4 +1,4 @@
-use lex::{Lexer, TokenKind as K, LiteralKind};
+use lex::{Lexer, LiteralKind, TokenKind as K};
 
 #[test]
 fn lex_string_basic_and_escape() {
@@ -41,6 +41,10 @@ fn lex_char_hex_and_octal() {
     for s in ["'\\x41';", "'\\101';"] {
         let mut lx = Lexer::new(s);
         let tok = lx.next_token().expect("token");
-        assert!(matches!(tok.kind, K::Literal(LiteralKind::Char { .. })), "not a char literal for {}", s);
+        assert!(
+            matches!(tok.kind, K::Literal(LiteralKind::Char { .. })),
+            "not a char literal for {}",
+            s
+        );
     }
 }

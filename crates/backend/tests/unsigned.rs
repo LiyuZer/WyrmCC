@@ -24,8 +24,16 @@ fn unsigned_div_mod_use_udiv_urem() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
-    assert!(ir.contains("udiv"), "IR should use udiv for unsigned division:\n{}", ir);
-    assert!(ir.contains("urem"), "IR should use urem for unsigned modulo:\n{}", ir);
+    assert!(
+        ir.contains("udiv"),
+        "IR should use udiv for unsigned division:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("urem"),
+        "IR should use urem for unsigned modulo:\n{}",
+        ir
+    );
 }
 
 #[test]

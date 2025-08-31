@@ -66,4 +66,6 @@ fn run_uac_int_vs_uint_and_conditional() {
 // On non-Unix platforms, skip (runner expectations and toolchain names differ)
 #[cfg(not(unix))]
 #[test]
-fn run_uac_int_vs_uint_and_conditional_skip() { assert!(true); }
+fn run_uac_int_vs_uint_and_conditional_skip() {
+    assert!(true);
+}

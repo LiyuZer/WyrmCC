@@ -4,7 +4,9 @@ use std::io::Write;
 use std::process::Command;
 use tempfile::tempdir;
 
-fn tools() -> (&'static str, &'static str) { ("clang-18", "llc-18") }
+fn tools() -> (&'static str, &'static str) {
+    ("clang-18", "llc-18")
+}
 
 #[test]
 fn run_returns_6_from_mul() {

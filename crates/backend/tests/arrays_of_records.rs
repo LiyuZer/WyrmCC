@@ -17,11 +17,27 @@ fn ptr_to_struct_index_member() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Expect byte-wise GEP used to compute element and field addresses
-    assert!(ir.contains("getelementptr inbounds i8"), "expected i8 GEP for pointer-to-struct indexing, IR:\n{}", ir);
+    assert!(
+        ir.contains("getelementptr inbounds i8"),
+        "expected i8 GEP for pointer-to-struct indexing, IR:\n{}",
+        ir
+    );
     // Store and later return
-    assert!(ir.contains("store i32 9"), "expected store of 9 to p[2].y, IR:\n{}", ir);
-    assert!(ir.contains("load i32, ptr"), "expected load from computed member pointer, IR:\n{}", ir);
-    assert!(ir.contains("ret i32"), "expected a return instruction, IR:\n{}", ir);
+    assert!(
+        ir.contains("store i32 9"),
+        "expected store of 9 to p[2].y, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("load i32, ptr"),
+        "expected load from computed member pointer, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ret i32"),
+        "expected a return instruction, IR:\n{}",
+        ir
+    );
 }
 
 // Nested arrays of structs: a[1].b.z chain
@@ -40,10 +56,26 @@ fn nested_array_struct_member_chain() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // We expect nested i8 GEPs: one for array element, another for member offsets
-    assert!(ir.contains("getelementptr inbounds i8"), "expected i8 GEPs for nested member chain, IR:\n{}", ir);
-    assert!(ir.contains("store i32 5"), "expected store of 5 to a[1].b.z, IR:\n{}", ir);
-    assert!(ir.contains("load i32, ptr"), "expected load from computed member pointer, IR:\n{}", ir);
-    assert!(ir.contains("ret i32"), "expected return instruction, IR:\n{}", ir);
+    assert!(
+        ir.contains("getelementptr inbounds i8"),
+        "expected i8 GEPs for nested member chain, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("store i32 5"),
+        "expected store of 5 to a[1].b.z, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("load i32, ptr"),
+        "expected load from computed member pointer, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ret i32"),
+        "expected return instruction, IR:\n{}",
+        ir
+    );
 }
 
 // Arrays of unions: u[1].i access should use element scaling and offset 0 within union
@@ -61,9 +93,24 @@ fn array_of_unions_element_member() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Expect i8 GEPs and an explicit offset 0 for the union member access
-    assert!(ir.contains("getelementptr inbounds i8"), "expected i8 GEP for array-of-union element, IR:\n{}", ir);
-    assert!(ir.contains(", i64 0") || ir.matches(", i64 ").count() > 1,
-        "expected a GEP including offset 0 for union member, IR:\n{}", ir);
-    assert!(ir.contains("store i32 3"), "expected store of 3 to u[1].i, IR:\n{}", ir);
-    assert!(ir.contains("ret i32"), "expected return instruction, IR:\n{}", ir);
+    assert!(
+        ir.contains("getelementptr inbounds i8"),
+        "expected i8 GEP for array-of-union element, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains(", i64 0") || ir.matches(", i64 ").count() > 1,
+        "expected a GEP including offset 0 for union member, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("store i32 3"),
+        "expected store of 3 to u[1].i, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ret i32"),
+        "expected return instruction, IR:\n{}",
+        ir
+    );
 }

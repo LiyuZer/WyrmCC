@@ -10,7 +10,9 @@ use std::process::Command;
 use tempfile::tempdir;
 
 #[cfg(unix)]
-fn llvm_tools() -> (&'static str, &'static str) { ("clang-18", "llc-18") }
+fn llvm_tools() -> (&'static str, &'static str) {
+    ("clang-18", "llc-18")
+}
 
 // Validate sizeof for core C89 integer types under current target assumptions.
 // Assumptions (consistent with existing tests):
@@ -27,7 +29,9 @@ fn sizeof_integers_and_pointers() {
     let c_path = dir.path().join("sizeof_ints.c");
     let mut f = fs::File::create(&c_path).unwrap();
 
-    writeln!(f, r#"int main(void) {{
+    writeln!(
+        f,
+        r#"int main(void) {{
     if (sizeof(char) != 1) return 101;
     if (sizeof(signed char) != 1) return 102;
     if (sizeof(unsigned char) != 1) return 103;
@@ -44,7 +48,9 @@ fn sizeof_integers_and_pointers() {
     if (sizeof(void*) != 8) return 501;
 
     return 0;
-}}"#).unwrap();
+}}"#
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
@@ -56,4 +62,6 @@ fn sizeof_integers_and_pointers() {
 
 #[cfg(not(unix))]
 #[test]
-fn sizeof_integers_and_pointers_skip() { assert!(true); }
+fn sizeof_integers_and_pointers_skip() {
+    assert!(true);
+}

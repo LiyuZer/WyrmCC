@@ -1,5 +1,5 @@
-use parse::parse_translation_unit;
 use parse::ast::{Expr, Stmt};
+use parse::parse_translation_unit;
 
 #[test]
 fn parse_do_while_single_stmt() {

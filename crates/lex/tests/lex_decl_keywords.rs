@@ -1,4 +1,4 @@
-use lex::{Lexer, TokenKind as K, Keyword as Kw, Punctuator as P, LiteralKind};
+use lex::{Keyword as Kw, Lexer, LiteralKind, Punctuator as P, TokenKind as K};
 
 fn toks(src: &str) -> Vec<lex::Token> {
     let mut lx = Lexer::new(src);
@@ -11,16 +11,26 @@ fn decl_type_keywords_tokenize() {
     let ts = toks(src);
     use K::*;
     let mut i = 0;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Auto))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Register))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Static))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Extern))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Const))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Volatile))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Struct))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Union))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Enum))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Typedef))); i+=1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Auto)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Register)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Static)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Extern)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Const)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Volatile)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Struct)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Union)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Enum)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Typedef)));
+    i += 1;
     assert_eq!(i, ts.len());
 }
 
@@ -31,24 +41,40 @@ fn decl_type_keywords_not_identifiers_when_separate() {
     let ts = toks(src);
     use K::*;
     let mut i = 0;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Extern))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Int))); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "x")); i+=1;
-    assert!(matches!(ts[i].kind, Punct(P::Semicolon))); i+=1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Extern)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Int)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "x"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Punct(P::Semicolon)));
+    i += 1;
 
-    assert!(matches!(ts[i].kind, Keyword(Kw::Typedef))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Int))); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "I")); i+=1;
-    assert!(matches!(ts[i].kind, Punct(P::Semicolon))); i+=1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Typedef)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Int)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "I"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Punct(P::Semicolon)));
+    i += 1;
 
-    assert!(matches!(ts[i].kind, Keyword(Kw::Struct))); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "S")); i+=1;
-    assert!(matches!(ts[i].kind, Punct(P::LBrace))); i+=1;
-    assert!(matches!(ts[i].kind, Keyword(Kw::Int))); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "a")); i+=1;
-    assert!(matches!(ts[i].kind, Punct(P::Semicolon))); i+=1;
-    assert!(matches!(ts[i].kind, Punct(P::RBrace))); i+=1;
-    assert!(matches!(ts[i].kind, Punct(P::Semicolon))); i+=1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Struct)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "S"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Punct(P::LBrace)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Keyword(Kw::Int)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "a"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Punct(P::Semicolon)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Punct(P::RBrace)));
+    i += 1;
+    assert!(matches!(ts[i].kind, Punct(P::Semicolon)));
+    i += 1;
 
     assert!(i <= ts.len());
 }
@@ -60,15 +86,25 @@ fn near_miss_identifiers_not_keywords() {
     let ts = toks(src);
     use K::*;
     let mut i = 0;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "autox")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "registery")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "staticc")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "externd")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "constx")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "volatiley")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "structz")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "unionw")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "enumm")); i+=1;
-    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "typedefx")); i+=1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "autox"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "registery"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "staticc"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "externd"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "constx"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "volatiley"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "structz"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "unionw"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "enumm"));
+    i += 1;
+    assert!(matches!(ts[i].kind, Identifier(ref s) if s == "typedefx"));
+    i += 1;
     assert_eq!(i, ts.len());
 }

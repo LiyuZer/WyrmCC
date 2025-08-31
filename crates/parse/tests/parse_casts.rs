@@ -1,12 +1,14 @@
+use parse::ast::{BinaryOp, Expr, Stmt, Type, UnaryOp};
 use parse::parse_translation_unit;
-use parse::ast::{Expr, Stmt, Type, UnaryOp, BinaryOp};
 
 fn find_return_expr(stmts: &[Stmt]) -> Option<&Expr> {
     for s in stmts {
         match s {
             Stmt::Return(e) => return Some(e),
             Stmt::Block(b) => {
-                if let Some(e) = find_return_expr(b) { return Some(e); }
+                if let Some(e) = find_return_expr(b) {
+                    return Some(e);
+                }
             }
             _ => {}
         }
@@ -53,7 +55,10 @@ fn parse_pointer_cast_of_addrof() {
                     if let Expr::Cast { ty, expr } = &**value {
                         assert!(matches!(ty, Type::Pointer(inner) if **inner == Type::Int));
                         match &**expr {
-                            Expr::Unary { op: UnaryOp::AddrOf, expr } => {
+                            Expr::Unary {
+                                op: UnaryOp::AddrOf,
+                                expr,
+                            } => {
                                 assert!(matches!(&**expr, Expr::Ident(n) if n == "x"));
                             }
                             other => panic!("expected AddrOf(Ident x), got {:?}", other),
@@ -84,7 +89,11 @@ fn parse_nested_cast_of_binary() {
         Expr::Cast { ty, expr } => {
             assert_eq!(ty, &Type::Int);
             match &**expr {
-                Expr::Binary { op: BinaryOp::Plus, lhs, rhs } => {
+                Expr::Binary {
+                    op: BinaryOp::Plus,
+                    lhs,
+                    rhs,
+                } => {
                     assert!(matches!(&**lhs, Expr::IntLiteral(s) if s == "1"));
                     assert!(matches!(&**rhs, Expr::IntLiteral(s) if s == "2"));
                 }
@@ -106,7 +115,11 @@ fn cast_precedence_in_addition() {
     let f = &tu.functions[0];
     let ret_e = find_return_expr(&f.body).expect("has return");
     match ret_e {
-        Expr::Binary { op: BinaryOp::Plus, lhs, rhs } => {
+        Expr::Binary {
+            op: BinaryOp::Plus,
+            lhs,
+            rhs,
+        } => {
             match &**lhs {
                 Expr::Cast { ty, expr } => {
                     assert_eq!(ty, &Type::Int);

@@ -19,13 +19,21 @@ fn emit_params_signature_and_prologue() {
     );
 
     // Prologue stores incoming args into allocas named %a.addr / %b.addr
-    assert!(ir.contains("%a.addr = alloca i32"), "missing a.addr alloca:\n{}", ir);
+    assert!(
+        ir.contains("%a.addr = alloca i32"),
+        "missing a.addr alloca:\n{}",
+        ir
+    );
     assert!(
         ir.contains("store i32 %a, ptr %a.addr"),
         "missing store of %a to %a.addr:\n{}",
         ir
     );
-    assert!(ir.contains("%b.addr = alloca i32"), "missing b.addr alloca:\n{}", ir);
+    assert!(
+        ir.contains("%b.addr = alloca i32"),
+        "missing b.addr alloca:\n{}",
+        ir
+    );
     assert!(
         ir.contains("store i32 %b, ptr %b.addr"),
         "missing store of %b to %b.addr:\n{}",

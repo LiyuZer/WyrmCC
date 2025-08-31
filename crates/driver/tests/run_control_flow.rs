@@ -34,7 +34,11 @@ fn run_while_sum_returns_10() {
     let dir = tempdir().unwrap();
     let c_path = dir.path().join("while_sum.c");
     let mut f = fs::File::create(&c_path).unwrap();
-    writeln!(f, "int main(void) {{ int i=0; int s=0; while(i<5){{ s=s+i; i=i+1; }} return s; }}").unwrap();
+    writeln!(
+        f,
+        "int main(void) {{ int i=0; int s=0; while(i<5){{ s=s+i; i=i+1; }} return s; }}"
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)

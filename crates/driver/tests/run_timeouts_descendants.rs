@@ -52,9 +52,7 @@ int main(void) {
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
     // Expect a timeout-induced failure and error mention
-    cmd.assert()
-        .failure()
-        .stderr(contains("timed out"));
+    cmd.assert().failure().stderr(contains("timed out"));
 }
 
 #[cfg(not(unix))]

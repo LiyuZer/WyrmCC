@@ -19,9 +19,18 @@ fn goto_forward() {
             params: vec![],
             variadic: false,
             body: vec![
-                Stmt::Decl { name: "x".into(), ty: Type::Int, init: Some(Expr::IntLiteral("1".into())), storage: None, quals: Qualifiers::none() },
+                Stmt::Decl {
+                    name: "x".into(),
+                    ty: Type::Int,
+                    init: Some(Expr::IntLiteral("1".into())),
+                    storage: None,
+                    quals: Qualifiers::none(),
+                },
                 Stmt::Goto("L1".into()),
-                Stmt::ExprStmt(Expr::Assign { name: "x".into(), value: Box::new(Expr::IntLiteral("2".into())) }),
+                Stmt::ExprStmt(Expr::Assign {
+                    name: "x".into(),
+                    value: Box::new(Expr::IntLiteral("2".into())),
+                }),
                 Stmt::Label("L1".into()),
                 Stmt::Return(Expr::IntLiteral("3".into())),
             ],
@@ -34,8 +43,16 @@ fn goto_forward() {
 
     let ir = ir_for(&tu);
     verify_ok(&ir);
-    assert!(ir.contains("br label %L"), "expected unconditional branch to a label in IR\n{}", ir);
-    assert!(ir.contains("\nL") && ir.contains(":"), "expected label blocks in IR\n{}", ir);
+    assert!(
+        ir.contains("br label %L"),
+        "expected unconditional branch to a label in IR\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\nL") && ir.contains(":"),
+        "expected label blocks in IR\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -48,7 +65,13 @@ fn goto_backward_loop() {
             params: vec![],
             variadic: false,
             body: vec![
-                Stmt::Decl { name: "i".into(), ty: Type::Int, init: Some(Expr::IntLiteral("0".into())), storage: None, quals: Qualifiers::none() },
+                Stmt::Decl {
+                    name: "i".into(),
+                    ty: Type::Int,
+                    init: Some(Expr::IntLiteral("0".into())),
+                    storage: None,
+                    quals: Qualifiers::none(),
+                },
                 Stmt::Label("L0".into()),
                 Stmt::ExprStmt(Expr::Assign {
                     name: "i".into(),
@@ -78,7 +101,11 @@ fn goto_backward_loop() {
 
     let ir = ir_for(&tu);
     verify_ok(&ir);
-    assert!(ir.contains("br label %L"), "expected branch to label (backedge) in IR\n{}", ir);
+    assert!(
+        ir.contains("br label %L"),
+        "expected branch to label (backedge) in IR\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -91,13 +118,25 @@ fn consecutive_labels() {
             params: vec![],
             variadic: false,
             body: vec![
-                Stmt::Decl { name: "i".into(), ty: Type::Int, init: Some(Expr::IntLiteral("0".into())), storage: None, quals: Qualifiers::none() },
+                Stmt::Decl {
+                    name: "i".into(),
+                    ty: Type::Int,
+                    init: Some(Expr::IntLiteral("0".into())),
+                    storage: None,
+                    quals: Qualifiers::none(),
+                },
                 Stmt::Label("L1".into()),
                 Stmt::Label("L2".into()),
-                Stmt::ExprStmt(Expr::Assign { name: "i".into(), value: Box::new(Expr::IntLiteral("1".into())) }),
+                Stmt::ExprStmt(Expr::Assign {
+                    name: "i".into(),
+                    value: Box::new(Expr::IntLiteral("1".into())),
+                }),
                 Stmt::Goto("end".into()),
                 Stmt::Label("L3".into()),
-                Stmt::ExprStmt(Expr::Assign { name: "i".into(), value: Box::new(Expr::IntLiteral("2".into())) }),
+                Stmt::ExprStmt(Expr::Assign {
+                    name: "i".into(),
+                    value: Box::new(Expr::IntLiteral("2".into())),
+                }),
                 Stmt::Label("end".into()),
                 Stmt::Return(Expr::Ident("i".into())),
             ],
@@ -111,7 +150,11 @@ fn consecutive_labels() {
     let ir = ir_for(&tu);
     verify_ok(&ir);
     // Ensure labels exist and are well-formed
-    assert!(ir.matches("\nL").count() >= 2, "expected multiple consecutive label blocks in IR\n{}", ir);
+    assert!(
+        ir.matches("\nL").count() >= 2,
+        "expected multiple consecutive label blocks in IR\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -124,13 +167,25 @@ fn goto_across_if() {
             params: vec![],
             variadic: false,
             body: vec![
-                Stmt::Decl { name: "x".into(), ty: Type::Int, init: Some(Expr::IntLiteral("1".into())), storage: None, quals: Qualifiers::none() },
+                Stmt::Decl {
+                    name: "x".into(),
+                    ty: Type::Int,
+                    init: Some(Expr::IntLiteral("1".into())),
+                    storage: None,
+                    quals: Qualifiers::none(),
+                },
                 Stmt::If {
                     cond: Expr::Ident("x".into()),
                     then_branch: vec![Stmt::Goto("out".into())],
                     else_branch: None,
                 },
-                Stmt::Decl { name: "y".into(), ty: Type::Int, init: Some(Expr::IntLiteral("5".into())), storage: None, quals: Qualifiers::none() },
+                Stmt::Decl {
+                    name: "y".into(),
+                    ty: Type::Int,
+                    init: Some(Expr::IntLiteral("5".into())),
+                    storage: None,
+                    quals: Qualifiers::none(),
+                },
                 Stmt::Label("out".into()),
                 Stmt::Return(Expr::Ident("x".into())),
             ],
@@ -143,8 +198,16 @@ fn goto_across_if() {
 
     let ir = ir_for(&tu);
     verify_ok(&ir);
-    assert!(ir.contains(" br i1 ") || ir.contains("icmp"), "expected conditional branch and compare in IR\n{}", ir);
-    assert!(ir.contains("br label %L"), "expected branch to label across if\n{}", ir);
+    assert!(
+        ir.contains(" br i1 ") || ir.contains("icmp"),
+        "expected conditional branch and compare in IR\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("br label %L"),
+        "expected branch to label across if\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -174,6 +237,14 @@ fn goto_with_return() {
 
     let ir = ir_for(&tu);
     verify_ok(&ir);
-    assert!(ir.contains("ret i32 7"), "expected early return before label\n{}", ir);
-    assert!(ir.contains("\nL") && ir.contains(":"), "expected labeled block after return\n{}", ir);
+    assert!(
+        ir.contains("ret i32 7"),
+        "expected early return before label\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\nL") && ir.contains(":"),
+        "expected labeled block after return\n{}",
+        ir
+    );
 }

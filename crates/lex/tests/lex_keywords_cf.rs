@@ -1,4 +1,4 @@
-use lex::{Lexer, TokenKind as K, Keyword as Kw, Punctuator as P, LiteralKind};
+use lex::{Keyword as Kw, Lexer, LiteralKind, Punctuator as P, TokenKind as K};
 
 fn toks(src: &str) -> Vec<lex::Token> {
     let mut lx = Lexer::new(src);

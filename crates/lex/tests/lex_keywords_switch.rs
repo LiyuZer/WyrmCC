@@ -1,4 +1,4 @@
-use lex::{Lexer, TokenKind as K, Keyword as Kw, Punctuator as P, LiteralKind};
+use lex::{Keyword as Kw, Lexer, LiteralKind, Punctuator as P, TokenKind as K};
 
 fn toks(src: &str) -> Vec<lex::Token> {
     let mut lx = Lexer::new(src);
@@ -40,26 +40,31 @@ fn switch_multiple_cases_and_stmt_tokens() {
     // Expect two case labels: `case 1:` and `case 2:`
     let mut case_ix = vec![];
     for (i, t) in ts.iter().enumerate() {
-        if matches!(t.kind, Keyword(Kw::Case)) { case_ix.push(i); }
+        if matches!(t.kind, Keyword(Kw::Case)) {
+            case_ix.push(i);
+        }
     }
     assert_eq!(case_ix.len(), 2);
 
     // For each case, next tokens should be an int literal then colon
     for &i in &case_ix {
-        assert!(matches!(ts[i+1].kind, Literal(LiteralKind::Int { .. })));
-        assert!(matches!(ts[i+2].kind, Punct(P::Colon)));
+        assert!(matches!(ts[i + 1].kind, Literal(LiteralKind::Int { .. })));
+        assert!(matches!(ts[i + 2].kind, Punct(P::Colon)));
     }
 
     // Statement: y = 3; and closing brace
     // Find `y`
     let mut yi = None;
     for (i, t) in ts.iter().enumerate() {
-        if matches!(t.kind, Identifier(ref s) if s == "y") { yi = Some(i); break; }
+        if matches!(t.kind, Identifier(ref s) if s == "y") {
+            yi = Some(i);
+            break;
+        }
     }
     let yi = yi.expect("identifier y present");
-    assert!(matches!(ts[yi+1].kind, Punct(P::Assign)));
-    assert!(matches!(ts[yi+2].kind, Literal(LiteralKind::Int { .. })));
-    assert!(matches!(ts[yi+3].kind, Punct(P::Semicolon)));
+    assert!(matches!(ts[yi + 1].kind, Punct(P::Assign)));
+    assert!(matches!(ts[yi + 2].kind, Literal(LiteralKind::Int { .. })));
+    assert!(matches!(ts[yi + 3].kind, Punct(P::Semicolon)));
 
     assert!(matches!(ts.last().unwrap().kind, Punct(P::RBrace)));
 }

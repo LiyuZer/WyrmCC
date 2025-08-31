@@ -18,9 +18,21 @@ fn pointer_aliasing_invalidates_consts() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Sanity: locals and initializations
-    assert!(ir.contains("%x = alloca i32"), "expected alloca for x, IR:\n{}", ir);
-    assert!(ir.contains("%p = alloca ptr"), "expected alloca for p, IR:\n{}", ir);
-    assert!(ir.contains("store i32 5, ptr %x"), "expected init store to x, IR:\n{}", ir);
+    assert!(
+        ir.contains("%x = alloca i32"),
+        "expected alloca for x, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("%p = alloca ptr"),
+        "expected alloca for p, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("store i32 5, ptr %x"),
+        "expected init store to x, IR:\n{}",
+        ir
+    );
     assert!(
         ir.contains("store ptr %x, ptr %p") || ir.contains("store ptr %"),
         "expected store of &x into p, IR:\n{}",
@@ -35,7 +47,11 @@ fn pointer_aliasing_invalidates_consts() {
     );
 
     // Return should load x, not fold to a literal constant
-    assert!(ir.contains("load i32, ptr %x"), "expected final load of x, IR:\n{}", ir);
+    assert!(
+        ir.contains("load i32, ptr %x"),
+        "expected final load of x, IR:\n{}",
+        ir
+    );
     assert!(
         ir.contains("ret i32 %"),
         "expected ret of SSA value (not a constant), IR:\n{}",
@@ -75,12 +91,31 @@ fn nested_loops_no_const_folding() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Heuristic IR checks: we should see loads of i and j (not constants) used in compares
-    assert!(ir.contains("%i = alloca i32") && ir.contains("%j = alloca i32"), "expected allocas for i and j, IR:\n{}", ir);
-    assert!(ir.contains("load i32, ptr %i"), "expected a load of i in loop, IR:\n{}", ir);
-    assert!(ir.contains("load i32, ptr %j"), "expected a load of j in inner loop, IR:\n{}", ir);
+    assert!(
+        ir.contains("%i = alloca i32") && ir.contains("%j = alloca i32"),
+        "expected allocas for i and j, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("load i32, ptr %i"),
+        "expected a load of i in loop, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("load i32, ptr %j"),
+        "expected a load of j in inner loop, IR:\n{}",
+        ir
+    );
     // Some compare should exist (slt / sle etc.)
-    assert!(ir.contains("icmp") && (ir.contains("slt") || ir.contains("sle") || ir.contains("sgt") || ir.contains("sge")),
-            "expected icmp in loop condition(s), IR:\n{}", ir);
+    assert!(
+        ir.contains("icmp")
+            && (ir.contains("slt")
+                || ir.contains("sle")
+                || ir.contains("sgt")
+                || ir.contains("sge")),
+        "expected icmp in loop condition(s), IR:\n{}",
+        ir
+    );
 }
 
 // A1: String literal lowering: check GEP form and that escapes are hex-encoded correctly.
@@ -97,18 +132,58 @@ fn string_gep_and_escapes() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Decl for puts, GEP for string, and global constant with escapes
-    assert!(ir.contains("declare i32 @puts(ptr)"), "expected puts declaration, IR:\n{}", ir);
+    assert!(
+        ir.contains("declare i32 @puts(ptr)"),
+        "expected puts declaration, IR:\n{}",
+        ir
+    );
 
     // There should be a global constant with hex escapes for '"' (0x22), '\\' (0x5C), and '\n' (0x0A), plus NUL (0x00)
-    assert!(ir.contains("private unnamed_addr constant ["), "expected a private unnamed_addr string constant, IR:\n{}", ir);
-    assert!(ir.contains(" c\""), "expected c\"...\" form for constant bytes, IR:\n{}", ir);
-    assert!(ir.contains("\\22"), "expected hex escape for quote (\\22), IR:\n{}", ir);
-    assert!(ir.contains("\\5C"), "expected hex escape for backslash (\\5C), IR:\n{}", ir);
-    assert!(ir.contains("\\0A"), "expected hex escape for newline (\\0A), IR:\n{}", ir);
-    assert!(ir.contains("\\00"), "expected NUL terminator (\\00), IR:\n{}", ir);
+    assert!(
+        ir.contains("private unnamed_addr constant ["),
+        "expected a private unnamed_addr string constant, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains(" c\""),
+        "expected c\"...\" form for constant bytes, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\\22"),
+        "expected hex escape for quote (\\22), IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\\5C"),
+        "expected hex escape for backslash (\\5C), IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\\0A"),
+        "expected hex escape for newline (\\0A), IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\\00"),
+        "expected NUL terminator (\\00), IR:\n{}",
+        ir
+    );
 
     // Check GEP uses [N x i8], ptr @.str.*, i64 0, i64 0
-    assert!(ir.contains("getelementptr inbounds ["), "expected GEP with array element type, IR:\n{}", ir);
-    assert!(ir.contains("ptr @.str."), "expected GEP to reference a @.str.* global, IR:\n{}", ir);
-    assert!(ir.contains(", i64 0, i64 0"), "expected GEP indices i64 0, i64 0, IR:\n{}", ir);
+    assert!(
+        ir.contains("getelementptr inbounds ["),
+        "expected GEP with array element type, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ptr @.str."),
+        "expected GEP to reference a @.str.* global, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains(", i64 0, i64 0"),
+        "expected GEP indices i64 0, i64 0, IR:\n{}",
+        ir
+    );
 }

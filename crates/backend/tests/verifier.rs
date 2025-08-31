@@ -26,7 +26,10 @@ L1:
 }
 "#;
     let e = verify_llvm_text(ir).unwrap_err();
-    assert!(e.to_string().contains("missing terminator"), "unexpected error: {e}");
+    assert!(
+        e.to_string().contains("missing terminator"),
+        "unexpected error: {e}"
+    );
 }
 
 #[test]
@@ -41,7 +44,10 @@ L1:
 }
 "#;
     let e = verify_llvm_text(ir).unwrap_err();
-    assert!(e.to_string().contains("instruction after terminator"), "unexpected error: {e}");
+    assert!(
+        e.to_string().contains("instruction after terminator"),
+        "unexpected error: {e}"
+    );
 }
 
 #[test]
@@ -53,7 +59,10 @@ entry:
 }
 "#;
     let e = verify_llvm_text(ir).unwrap_err();
-    assert!(e.to_string().contains("undefined label"), "unexpected error: {e}");
+    assert!(
+        e.to_string().contains("undefined label"),
+        "unexpected error: {e}"
+    );
 }
 
 #[test]
@@ -70,5 +79,8 @@ L2:
 }
 "#;
     let e = verify_llvm_text(ir).unwrap_err();
-    assert!(e.to_string().contains("multiple terminators"), "unexpected error: {e}");
+    assert!(
+        e.to_string().contains("multiple terminators"),
+        "unexpected error: {e}"
+    );
 }

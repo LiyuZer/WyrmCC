@@ -2,7 +2,9 @@ use backend::emit_llvm_ir;
 use parse::parse_translation_unit;
 
 fn count_substr(hay: &str, needle: &str) -> usize {
-    if needle.is_empty() { return 0; }
+    if needle.is_empty() {
+        return 0;
+    }
     let mut count = 0;
     let mut start = 0;
     while let Some(pos) = hay[start..].find(needle) {
@@ -62,11 +64,20 @@ fn cond_alloca_and_join_present() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // There should be a conditional branch
-    assert!(ir.contains("br i1 %t"), "expected br i1 for ?:, IR:\n{}", ir);
+    assert!(
+        ir.contains("br i1 %t"),
+        "expected br i1 for ?:, IR:\n{}",
+        ir
+    );
 
     // Heuristic: expect at least one alloca i32 beyond the declared locals (a,b,r) —
     // i.e., 4 or more allocas (3 locals + 1 temp). We just assert >= 3 to be lenient if
     // the backend chooses a different strategy later.
     let allocas = count_substr(&ir, " = alloca i32");
-    assert!(allocas >= 3, "expected >=3 allocas, saw {}. IR:\n{}", allocas, ir);
+    assert!(
+        allocas >= 3,
+        "expected >=3 allocas, saw {}. IR:\n{}",
+        allocas,
+        ir
+    );
 }

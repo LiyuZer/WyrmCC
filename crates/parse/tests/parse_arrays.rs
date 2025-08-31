@@ -1,11 +1,15 @@
-use parse::parse_translation_unit;
 use parse::ast::{Expr, Stmt, Type};
+use parse::parse_translation_unit;
 
 fn find_decl<'a>(stmts: &'a [Stmt], name: &str) -> Option<(&'a String, &'a Type)> {
     for s in stmts {
         match s {
             Stmt::Decl { name: n, ty, .. } if n == name => return Some((n, ty)),
-            Stmt::Block(b) => if let Some(found) = find_decl(b, name) { return Some(found); },
+            Stmt::Block(b) => {
+                if let Some(found) = find_decl(b, name) {
+                    return Some(found);
+                }
+            }
             _ => {}
         }
     }
@@ -16,7 +20,11 @@ fn find_return_expr<'a>(stmts: &'a [Stmt]) -> Option<&'a Expr> {
     for s in stmts {
         match s {
             Stmt::Return(e) => return Some(e),
-            Stmt::Block(b) => if let Some(e) = find_return_expr(b) { return Some(e); },
+            Stmt::Block(b) => {
+                if let Some(e) = find_return_expr(b) {
+                    return Some(e);
+                }
+            }
             _ => {}
         }
     }
@@ -37,7 +45,11 @@ fn parse_decl_int_array() {
     let (_n, ty) = find_decl(&f.body, "a").expect("found decl a");
     match ty {
         Type::Array(inner, n) => {
-            assert!(matches!(&**inner, Type::Int), "inner type should be int, got {:?}", inner);
+            assert!(
+                matches!(&**inner, Type::Int),
+                "inner type should be int, got {:?}",
+                inner
+            );
             assert_eq!(*n, 3usize);
         }
         other => panic!("expected array type, got {:?}", other),

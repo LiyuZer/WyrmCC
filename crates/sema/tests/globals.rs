@@ -8,7 +8,10 @@ fn sema_global_int_const_ok() {
         int main(void) { return 0; }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_ok(), "expected sema ok for const-int global init");
+    assert!(
+        check_translation_unit(&tu).is_ok(),
+        "expected sema ok for const-int global init"
+    );
 }
 
 #[test]
@@ -19,7 +22,10 @@ fn sema_global_nonconst_init_err() {
         int main(void) { return 0; }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_err(), "expected sema error for non-const global init");
+    assert!(
+        check_translation_unit(&tu).is_err(),
+        "expected sema error for non-const global init"
+    );
 }
 
 #[test]
@@ -30,7 +36,10 @@ fn sema_extern_then_def_ok() {
         int main(void) { return g; }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_ok(), "extern then definition should be ok");
+    assert!(
+        check_translation_unit(&tu).is_ok(),
+        "extern then definition should be ok"
+    );
 }
 
 #[test]
@@ -41,7 +50,10 @@ fn sema_duplicate_definition_err() {
         int main(void) { return 0; }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_err(), "expected sema error for duplicate global definition");
+    assert!(
+        check_translation_unit(&tu).is_err(),
+        "expected sema error for duplicate global definition"
+    );
 }
 
 #[test]
@@ -51,5 +63,8 @@ fn sema_global_ptr_string_ok() {
         int main(void) { return p != 0; }
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
-    assert!(check_translation_unit(&tu).is_ok(), "pointer-to-string literal initializer should be ok");
+    assert!(
+        check_translation_unit(&tu).is_ok(),
+        "pointer-to-string literal initializer should be ok"
+    );
 }

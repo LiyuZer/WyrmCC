@@ -38,7 +38,11 @@ fn while_sum_ir_not_constant_folded() {
     );
 
     // The loop should have a backedge
-    assert!(ir.contains("br label %L"), "expected backedge/unconditional branch to a label:\n{}", ir);
+    assert!(
+        ir.contains("br label %L"),
+        "expected backedge/unconditional branch to a label:\n{}",
+        ir
+    );
 
     // And we should load i within the loop at least once.
     assert!(
@@ -81,7 +85,11 @@ fn for_sum_ir_not_constant_folded() {
     );
 
     // Backedge and loads
-    assert!(ir.contains("br label %L"), "expected backedge/unconditional branch to a label:\n{}", ir);
+    assert!(
+        ir.contains("br label %L"),
+        "expected backedge/unconditional branch to a label:\n{}",
+        ir
+    );
     assert!(
         ir.contains("load i32, ptr %i"),
         "expected loads of i from its alloca inside loop, IR:\n{}",

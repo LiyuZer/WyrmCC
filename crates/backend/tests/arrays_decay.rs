@@ -23,7 +23,11 @@ fn array_argument_decays_to_pointer() {
     );
 
     // Call should be present
-    assert!(ir.contains(" call i32 @sink("), "expected call to sink, IR:\n{}", ir);
+    assert!(
+        ir.contains(" call i32 @sink("),
+        "expected call to sink, IR:\n{}",
+        ir
+    );
 }
 
 #[test]

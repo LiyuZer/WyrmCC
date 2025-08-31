@@ -1,6 +1,6 @@
-pub mod token;
 pub mod keywords;
 mod lexer;
+pub mod token;
 
 pub use lexer::Lexer;
 pub use token::{IntBase, Keyword, LiteralKind, Punctuator, Span, Token, TokenKind};

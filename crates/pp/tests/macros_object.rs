@@ -1,6 +1,8 @@
 use pp::Preprocessor;
 
-fn squash(s: &str) -> String { s.chars().filter(|c| !c.is_whitespace()).collect() }
+fn squash(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
 
 #[test]
 fn define_object_basic() {

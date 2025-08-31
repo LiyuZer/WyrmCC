@@ -1,5 +1,5 @@
-use sema::check_translation_unit;
 use parse::parse_translation_unit;
+use sema::check_translation_unit;
 
 #[test]
 fn extern_decl_only_ok() {
@@ -20,7 +20,11 @@ fn extern_with_init_err() {
     let tu = parse_translation_unit(src).expect("parse ok");
     let err = check_translation_unit(&tu).expect_err("extern with init should error");
     let msg = format!("{}", err);
-    assert!(msg.contains("extern global") && msg.contains("g"), "unexpected error: {}", msg);
+    assert!(
+        msg.contains("extern global") && msg.contains("g"),
+        "unexpected error: {}",
+        msg
+    );
 }
 
 #[test]
@@ -52,5 +56,9 @@ fn duplicate_defs_err() {
     let tu = parse_translation_unit(src).expect("parse ok");
     let err = check_translation_unit(&tu).expect_err("duplicate defs should error");
     let msg = format!("{}", err);
-    assert!(msg.contains("duplicate global definition"), "unexpected error: {}", msg);
+    assert!(
+        msg.contains("duplicate global definition"),
+        "unexpected error: {}",
+        msg
+    );
 }

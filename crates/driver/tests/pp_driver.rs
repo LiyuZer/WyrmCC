@@ -5,7 +5,9 @@ use std::io::Write;
 use std::process::Command;
 use tempfile::tempdir;
 
-fn squash(s: &str) -> String { s.chars().filter(|c| !c.is_whitespace()).collect() }
+fn squash(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
 
 #[test]
 fn preprocess_internal_pp_basic() {
@@ -20,7 +22,9 @@ fn preprocess_internal_pp_basic() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::function(|out: &str| squash(out).contains("intx=1;")));
+        .stdout(predicate::function(|out: &str| {
+            squash(out).contains("intx=1;")
+        }));
 }
 
 #[test]
@@ -32,11 +36,18 @@ fn preprocess_flag_define_object_macro() {
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     // Provide -D FOO=42 on the command line
-    cmd.args(["preprocess", file_path.to_string_lossy().as_ref(), "-D", "FOO=42"]);
+    cmd.args([
+        "preprocess",
+        file_path.to_string_lossy().as_ref(),
+        "-D",
+        "FOO=42",
+    ]);
 
     cmd.assert()
         .success()
-        .stdout(predicate::function(|out: &str| squash(out).contains("intx=42;")));
+        .stdout(predicate::function(|out: &str| {
+            squash(out).contains("intx=42;")
+        }));
 }
 
 #[test]
@@ -52,17 +63,26 @@ fn preprocess_flag_ifdef_toggles() {
 
     // With -D FLAG we should see v=1
     let mut cmd1 = Command::cargo_bin("wyrmcc").unwrap();
-    cmd1.args(["preprocess", file_path.to_string_lossy().as_ref(), "-D", "FLAG=1"]);
+    cmd1.args([
+        "preprocess",
+        file_path.to_string_lossy().as_ref(),
+        "-D",
+        "FLAG=1",
+    ]);
     cmd1.assert()
         .success()
-        .stdout(predicate::function(|out: &str| squash(out).contains("intv=1;")));
+        .stdout(predicate::function(|out: &str| {
+            squash(out).contains("intv=1;")
+        }));
 
     // Without -D (or with -U) we should see v=2
     let mut cmd2 = Command::cargo_bin("wyrmcc").unwrap();
     cmd2.args(["preprocess", file_path.to_string_lossy().as_ref()]);
     cmd2.assert()
         .success()
-        .stdout(predicate::function(|out: &str| squash(out).contains("intv=2;")));
+        .stdout(predicate::function(|out: &str| {
+            squash(out).contains("intv=2;")
+        }));
 }
 
 #[test]

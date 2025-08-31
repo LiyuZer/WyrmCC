@@ -1,17 +1,17 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use clap::{Parser, Subcommand, Args, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use backend::emit_llvm_ir;
 use lex::Lexer;
 use parse::parse_translation_unit;
-use backend::emit_llvm_ir;
-use sema::check_translation_unit;
 use pp::Preprocessor;
+use sema::check_translation_unit;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -130,7 +130,12 @@ struct RunArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Preprocess { input, define, undef, include } => cmd_preprocess(&input, &define, &undef, &include),
+        Commands::Preprocess {
+            input,
+            define,
+            undef,
+            include,
+        } => cmd_preprocess(&input, &define, &undef, &include),
         Commands::Tokens { input, extra } => cmd_tokens(&input, &extra),
         Commands::Ast { input, extra } => cmd_ast(&input, &extra),
         Commands::EmitLlvm { input, extra } => cmd_emit_llvm(&input, &extra),
@@ -177,10 +182,17 @@ fn env_flag_true(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn debug_timeout_enabled() -> bool { env_flag_true("WYRMC_DEBUG_TIMEOUT") }
-fn disable_pg_kill_enabled() -> bool { env_flag_true("WYRMC_DISABLE_PG_KILL") }
+fn debug_timeout_enabled() -> bool {
+    env_flag_true("WYRMC_DEBUG_TIMEOUT")
+}
+fn disable_pg_kill_enabled() -> bool {
+    env_flag_true("WYRMC_DISABLE_PG_KILL")
+}
 
-fn run_with_timeout(mut cmd: Command, timeout: Option<Duration>) -> Result<std::process::ExitStatus> {
+fn run_with_timeout(
+    mut cmd: Command,
+    timeout: Option<Duration>,
+) -> Result<std::process::ExitStatus> {
     // Isolate child in its own session and process group on Unix
     #[cfg(unix)]
     {
@@ -212,7 +224,11 @@ fn run_with_timeout(mut cmd: Command, timeout: Option<Duration>) -> Result<std::
         .with_context(|| format!("failed to spawn {:?}", cmd))?;
 
     if debug {
-        eprintln!("[wyrmcc] spawned child pid={} timeout={:?}", child.id(), timeout);
+        eprintln!(
+            "[wyrmcc] spawned child pid={} timeout={:?}",
+            child.id(),
+            timeout
+        );
     }
 
     if let Some(limit) = timeout {
@@ -246,15 +262,16 @@ fn run_with_timeout(mut cmd: Command, timeout: Option<Duration>) -> Result<std::
                             }
                             // Always attempt to kill the direct child as a fallback (harmless if already dead)
                             if debug {
-                                eprintln!("[wyrmcc] timeout: killing child pid={} (group_killed={})", child.id(), group_killed);
+                                eprintln!(
+                                    "[wyrmcc] timeout: killing child pid={} (group_killed={})",
+                                    child.id(),
+                                    group_killed
+                                );
                             }
                         }
                         let _ = child.kill();
                         let _ = child.wait();
-                        return Err(anyhow!(
-                            "process timed out after {}s",
-                            limit.as_secs()
-                        ));
+                        return Err(anyhow!("process timed out after {}s", limit.as_secs()));
                     }
                     sleep(Duration::from_millis(50));
                 }
@@ -278,7 +295,12 @@ fn apply_defines_undefs(pp: &mut Preprocessor, defines: &[String], undefs: &[Str
     }
 }
 
-fn preprocess_capture(input: &PathBuf, defines: &[String], undefs: &[String], include_dirs: &[PathBuf]) -> Result<String> {
+fn preprocess_capture(
+    input: &PathBuf,
+    defines: &[String],
+    undefs: &[String],
+    include_dirs: &[PathBuf],
+) -> Result<String> {
     if !input.exists() {
         return Err(anyhow!("input file not found: {}", input.display()));
     }
@@ -288,7 +310,12 @@ fn preprocess_capture(input: &PathBuf, defines: &[String], undefs: &[String], in
     Ok(out)
 }
 
-fn cmd_preprocess(input: &PathBuf, defines: &[String], undefs: &[String], includes: &[PathBuf]) -> Result<()> {
+fn cmd_preprocess(
+    input: &PathBuf,
+    defines: &[String],
+    undefs: &[String],
+    includes: &[PathBuf],
+) -> Result<()> {
     let pre = preprocess_capture(input, defines, undefs, includes)?;
     print!("{}", pre);
     Ok(())
@@ -338,9 +365,23 @@ fn cmd_build(args: &BuildArgs) -> Result<()> {
         .unwrap_or_else(|| "out".to_string());
 
     let want_asm = args.emit_asm;
-    let want_obj = args.compile_only || (!want_asm && args.output.as_ref().map(|p| p.extension().map(|e| e == "o").unwrap_or(false)).unwrap_or(false));
+    let want_obj = args.compile_only
+        || (!want_asm
+            && args
+                .output
+                .as_ref()
+                .map(|p| p.extension().map(|e| e == "o").unwrap_or(false))
+                .unwrap_or(false));
 
-    let out_path = if let Some(ref o) = args.output { o.clone() } else if want_asm { PathBuf::from(format!("{}.s", stem)) } else if want_obj { PathBuf::from(format!("{}.o", stem)) } else { PathBuf::from("a.out") };
+    let out_path = if let Some(ref o) = args.output {
+        o.clone()
+    } else if want_asm {
+        PathBuf::from(format!("{}.s", stem))
+    } else if want_obj {
+        PathBuf::from(format!("{}.o", stem))
+    } else {
+        PathBuf::from("a.out")
+    };
 
     // Write IR to temp file
     let dir = tempfile::tempdir()?;
@@ -356,13 +397,19 @@ fn cmd_build(args: &BuildArgs) -> Result<()> {
         llc_args.push(out_path.display().to_string());
     } else {
         // produce object (.o)
-        let obj_path = if want_obj { out_path.clone() } else { dir.path().join(format!("{}.o", stem)) };
+        let obj_path = if want_obj {
+            out_path.clone()
+        } else {
+            dir.path().join(format!("{}.o", stem))
+        };
         llc_args.push("-filetype=obj".to_string());
         llc_args.push("-o".to_string());
         llc_args.push(obj_path.display().to_string());
 
         // Optimization level for llc
-        if let Some(ref lvl) = args.opt { llc_args.push(format!("-O{}", lvl)); }
+        if let Some(ref lvl) = args.opt {
+            llc_args.push(format!("-O{}", lvl));
+        }
 
         // Run llc
         let mut cmd = Command::new(&llc);
@@ -372,7 +419,9 @@ fn cmd_build(args: &BuildArgs) -> Result<()> {
             .stderr(Stdio::inherit());
         let status = run_with_timeout(cmd, timeout_from_env())
             .with_context(|| format!("failed to spawn {:?}", llc))?;
-        if !status.success() { return Err(anyhow!("llc failed with status: {}", status)); }
+        if !status.success() {
+            return Err(anyhow!("llc failed with status: {}", status));
+        }
 
         if want_obj {
             // Completed .o output
@@ -387,8 +436,12 @@ fn cmd_build(args: &BuildArgs) -> Result<()> {
             "-o".to_string(),
             out_path.display().to_string(),
         ];
-        if let Some(ref lvl) = args.opt { link_args.push(format!("-O{}", lvl)); }
-        if args.debug { link_args.push("-g".to_string()); }
+        if let Some(ref lvl) = args.opt {
+            link_args.push(format!("-O{}", lvl));
+        }
+        if args.debug {
+            link_args.push("-g".to_string());
+        }
         link_args.extend(args.extra.clone());
         let mut cmd = Command::new(&clang);
         cmd.args(&link_args)
@@ -397,12 +450,16 @@ fn cmd_build(args: &BuildArgs) -> Result<()> {
             .stderr(Stdio::inherit());
         let status = run_with_timeout(cmd, timeout_from_env())
             .with_context(|| format!("failed to spawn {:?}", clang))?;
-        if !status.success() { return Err(anyhow!("linking failed with status: {}", status)); }
+        if !status.success() {
+            return Err(anyhow!("linking failed with status: {}", status));
+        }
         return Ok(());
     }
 
     // Optimization level for llc (for -S path as well)
-    if let Some(ref lvl) = args.opt { llc_args.push(format!("-O{}", lvl)); }
+    if let Some(ref lvl) = args.opt {
+        llc_args.push(format!("-O{}", lvl));
+    }
 
     let mut cmd = Command::new(&llc);
     cmd.args(&llc_args)
@@ -411,7 +468,9 @@ fn cmd_build(args: &BuildArgs) -> Result<()> {
         .stderr(Stdio::inherit());
     let status = run_with_timeout(cmd, timeout_from_env())
         .with_context(|| format!("failed to spawn {:?}", llc))?;
-    if !status.success() { return Err(anyhow!("llc failed with status: {}", status)); }
+    if !status.success() {
+        return Err(anyhow!("llc failed with status: {}", status));
+    }
 
     Ok(())
 }
@@ -454,7 +513,9 @@ fn cmd_run(args: &RunArgs) -> Result<i32> {
                 "-o".to_string(),
                 obj_path.display().to_string(),
             ];
-            if let Some(ref lvl) = args.opt { llc_args.push(format!("-O{}", lvl)); }
+            if let Some(ref lvl) = args.opt {
+                llc_args.push(format!("-O{}", lvl));
+            }
 
             let mut cmd = Command::new(&llc);
             cmd.args(&llc_args)
@@ -463,7 +524,9 @@ fn cmd_run(args: &RunArgs) -> Result<i32> {
                 .stderr(Stdio::inherit());
             let status = run_with_timeout(cmd, timeout_from_env())
                 .with_context(|| format!("failed to spawn {:?}", llc))?;
-            if !status.success() { return Err(anyhow!("llc failed with status: {}", status)); }
+            if !status.success() {
+                return Err(anyhow!("llc failed with status: {}", status));
+            }
 
             // Link to executable via clang
             let clang = resolve_clang_path()?;
@@ -473,8 +536,12 @@ fn cmd_run(args: &RunArgs) -> Result<i32> {
                 "-o".to_string(),
                 exe_path.display().to_string(),
             ];
-            if let Some(ref lvl) = args.opt { link_args.push(format!("-O{}", lvl)); }
-            if args.debug { link_args.push("-g".to_string()); }
+            if let Some(ref lvl) = args.opt {
+                link_args.push(format!("-O{}", lvl));
+            }
+            if args.debug {
+                link_args.push("-g".to_string());
+            }
 
             let mut cmd = Command::new(&clang);
             cmd.args(&link_args)
@@ -483,7 +550,9 @@ fn cmd_run(args: &RunArgs) -> Result<i32> {
                 .stderr(Stdio::inherit());
             let status = run_with_timeout(cmd, timeout_from_env())
                 .with_context(|| format!("failed to spawn {:?}", clang))?;
-            if !status.success() { return Err(anyhow!("linking failed with status: {}", status)); }
+            if !status.success() {
+                return Err(anyhow!("linking failed with status: {}", status));
+            }
         }
         Err(e) => {
             // Fallback: if the internal preprocessor fails due to missing system headers,
@@ -501,8 +570,12 @@ fn cmd_run(args: &RunArgs) -> Result<i32> {
                 }
                 // Flags and output
                 cc_args.push("-no-pie".to_string());
-                if let Some(ref lvl) = args.opt { cc_args.push(format!("-O{}", lvl)); }
-                if args.debug { cc_args.push("-g".to_string()); }
+                if let Some(ref lvl) = args.opt {
+                    cc_args.push(format!("-O{}", lvl));
+                }
+                if args.debug {
+                    cc_args.push("-g".to_string());
+                }
                 cc_args.push("-o".to_string());
                 cc_args.push(exe_path.display().to_string());
 
@@ -513,7 +586,9 @@ fn cmd_run(args: &RunArgs) -> Result<i32> {
                     .stderr(Stdio::inherit());
                 let status = run_with_timeout(cmd, timeout_from_env())
                     .with_context(|| format!("failed to spawn {:?}", clang))?;
-                if !status.success() { return Err(anyhow!("clang failed with status: {}", status)); }
+                if !status.success() {
+                    return Err(anyhow!("clang failed with status: {}", status));
+                }
             } else {
                 return Err(e);
             }

@@ -37,25 +37,41 @@ fn parse_for_init_and_post_with_commas() {
     assert!(matches!(f.body[0], Stmt::Decl { ref name, ty: Type::Int, .. } if name == "i"));
     assert!(matches!(f.body[1], Stmt::Decl { ref name, ty: Type::Int, .. } if name == "j"));
     match &f.body[2] {
-        Stmt::For { init, cond, post, body } => {
+        Stmt::For {
+            init,
+            cond,
+            post,
+            body,
+        } => {
             // init
             match init {
-                Some(Expr::Comma { lhs, rhs }) => {
-                    match (&**lhs, &**rhs) {
-                        (Expr::Assign { name: n1, value: v1 }, Expr::Assign { name: n2, value: v2 }) => {
-                            assert_eq!(n1, "i");
-                            assert!(matches!(&**v1, Expr::IntLiteral(ref s) if s == "0"));
-                            assert_eq!(n2, "j");
-                            assert!(matches!(&**v2, Expr::IntLiteral(ref s) if s == "0"));
-                        }
-                        other => panic!("unexpected init comma pair: {:?}", other),
+                Some(Expr::Comma { lhs, rhs }) => match (&**lhs, &**rhs) {
+                    (
+                        Expr::Assign {
+                            name: n1,
+                            value: v1,
+                        },
+                        Expr::Assign {
+                            name: n2,
+                            value: v2,
+                        },
+                    ) => {
+                        assert_eq!(n1, "i");
+                        assert!(matches!(&**v1, Expr::IntLiteral(ref s) if s == "0"));
+                        assert_eq!(n2, "j");
+                        assert!(matches!(&**v2, Expr::IntLiteral(ref s) if s == "0"));
                     }
-                }
+                    other => panic!("unexpected init comma pair: {:?}", other),
+                },
                 other => panic!("unexpected init: {:?}", other),
             }
             // cond
             match cond {
-                Some(Expr::Binary { op: BinaryOp::Lt, lhs, rhs }) => {
+                Some(Expr::Binary {
+                    op: BinaryOp::Lt,
+                    lhs,
+                    rhs,
+                }) => {
                     assert!(matches!(&**lhs, Expr::Ident(ref s) if s == "i"));
                     assert!(matches!(&**rhs, Expr::IntLiteral(ref s) if s == "3"));
                 }
@@ -66,8 +82,18 @@ fn parse_for_init_and_post_with_commas() {
                 Some(Expr::Comma { lhs, rhs }) => {
                     // post is i++, j++ (as postfix)
                     match (&**lhs, &**rhs) {
-                        (Expr::IncDec { pre: false, inc: true, target: t1 },
-                         Expr::IncDec { pre: false, inc: true, target: t2 }) => {
+                        (
+                            Expr::IncDec {
+                                pre: false,
+                                inc: true,
+                                target: t1,
+                            },
+                            Expr::IncDec {
+                                pre: false,
+                                inc: true,
+                                target: t2,
+                            },
+                        ) => {
                             assert!(matches!(&**t1, Expr::Ident(ref s) if s == "i"));
                             assert!(matches!(&**t2, Expr::Ident(ref s) if s == "j"));
                         }

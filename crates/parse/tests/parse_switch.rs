@@ -56,9 +56,13 @@ fn parse_switch_fallthrough_multiple_cases() {
             // Expect: Case(1), Case(2), y=3;, Default, y=4;
             assert!(matches!(body[0], Stmt::Case { .. }));
             assert!(matches!(body[1], Stmt::Case { .. }));
-            assert!(matches!(body[2], Stmt::ExprStmt(Expr::Assign { ref name, .. }) if name == "y"));
+            assert!(
+                matches!(body[2], Stmt::ExprStmt(Expr::Assign { ref name, .. }) if name == "y")
+            );
             assert!(matches!(body[3], Stmt::Default));
-            assert!(matches!(body[4], Stmt::ExprStmt(Expr::Assign { ref name, .. }) if name == "y"));
+            assert!(
+                matches!(body[4], Stmt::ExprStmt(Expr::Assign { ref name, .. }) if name == "y")
+            );
         }
         other => panic!("expected Switch stmt, got {:?}", other),
     }

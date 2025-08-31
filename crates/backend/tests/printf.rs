@@ -18,7 +18,8 @@ fn printf_decl_and_ptr_and_int_args_typed() {
 
     // Declaration for printf should be varargs with first arg ptr
     assert!(
-        ir.contains("declare i32 @printf(ptr, ...)") || ir.contains("declare i32 @printf(ptr , ...)") ,
+        ir.contains("declare i32 @printf(ptr, ...)")
+            || ir.contains("declare i32 @printf(ptr , ...)"),
         "expected printf declaration with ptr, ...; IR:\n{}",
         ir
     );

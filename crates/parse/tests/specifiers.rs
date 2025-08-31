@@ -1,9 +1,13 @@
-use parse::parse_translation_unit;
 use parse::ast::Type;
+use parse::parse_translation_unit;
 
 fn decl_type(src: &str, name: &str) -> Type {
     let tu = parse_translation_unit(src).expect("parse ok");
-    let g = tu.globals.iter().find(|g| g.name == name).expect("decl present");
+    let g = tu
+        .globals
+        .iter()
+        .find(|g| g.name == name)
+        .expect("decl present");
     g.ty.clone()
 }
 
@@ -19,7 +23,10 @@ fn short_family() {
     assert!(matches!(decl_type("short s;", "s"), Type::Short));
     assert!(matches!(decl_type("short int s;", "s"), Type::Short));
     assert!(matches!(decl_type("signed short ss;", "ss"), Type::Short));
-    assert!(matches!(decl_type("unsigned short us;", "us"), Type::UShort));
+    assert!(matches!(
+        decl_type("unsigned short us;", "us"),
+        Type::UShort
+    ));
 }
 
 #[test]

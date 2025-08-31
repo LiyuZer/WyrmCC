@@ -12,7 +12,11 @@ fn emit_single_for_tentatives() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     let cnt = ir.matches("@g = ").count();
-    assert_eq!(cnt, 1, "expected exactly one global emission for g, IR:\n{}", ir);
+    assert_eq!(
+        cnt, 1,
+        "expected exactly one global emission for g, IR:\n{}",
+        ir
+    );
     assert!(
         ir.contains("@g = global i32 zeroinitializer")
             || ir.contains("@g = global i32 0")
@@ -35,8 +39,16 @@ fn prefer_definition_over_extern() {
 
     let cnt = ir.matches("@g = ").count();
     assert_eq!(cnt, 1, "expected exactly one @g emission, IR:\n{}", ir);
-    assert!(ir.contains("@g = global i32 3"), "expected concrete definition with 3, IR:\n{}", ir);
-    assert!(!ir.contains("@g = external global i32"), "should not emit external for g when definition exists, IR:\n{}", ir);
+    assert!(
+        ir.contains("@g = global i32 3"),
+        "expected concrete definition with 3, IR:\n{}",
+        ir
+    );
+    assert!(
+        !ir.contains("@g = external global i32"),
+        "should not emit external for g when definition exists, IR:\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -51,6 +63,14 @@ fn extern_only_emits_external() {
 
     let cnt = ir.matches("@g = ").count();
     assert_eq!(cnt, 1, "expected exactly one @g emission, IR:\n{}", ir);
-    assert!(ir.contains("@g = external global i32"), "expected external global for g, IR:\n{}", ir);
-    assert!(!ir.contains("@g = global i32 "), "should not emit non-external definition for g, IR:\n{}", ir);
+    assert!(
+        ir.contains("@g = external global i32"),
+        "expected external global for g, IR:\n{}",
+        ir
+    );
+    assert!(
+        !ir.contains("@g = global i32 "),
+        "should not emit non-external definition for g, IR:\n{}",
+        ir
+    );
 }

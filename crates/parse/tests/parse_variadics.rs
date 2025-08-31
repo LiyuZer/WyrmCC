@@ -21,7 +21,10 @@ fn parse_variadic_invalid_no_named_param() {
     let src = r#"
         int bad(...) { return 0; }
     "#;
-    assert!(parse_translation_unit(src).is_err(), "expected error for f(...)");
+    assert!(
+        parse_translation_unit(src).is_err(),
+        "expected error for f(...)"
+    );
 }
 
 #[test]
@@ -29,5 +32,8 @@ fn parse_variadic_invalid_not_last() {
     let src = r#"
         int g(int a, ..., int b) { return a; }
     "#;
-    assert!(parse_translation_unit(src).is_err(), "expected error when ... is not last");
+    assert!(
+        parse_translation_unit(src).is_err(),
+        "expected error when ... is not last"
+    );
 }

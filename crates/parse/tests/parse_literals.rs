@@ -14,7 +14,12 @@ fn parse_string_literal_exprstmt() {
     // Expect first stmt to be an expression statement with a string literal
     match &f.body[0] {
         Stmt::ExprStmt(Expr::StringLiteral(s)) => {
-            assert!(s.contains("\\n") || s.contains("\\x0a") || s.contains("\\012") || s.contains("hello"));
+            assert!(
+                s.contains("\\n")
+                    || s.contains("\\x0a")
+                    || s.contains("\\012")
+                    || s.contains("hello")
+            );
         }
         other => panic!("expected string literal expr stmt, got: {:?}", other),
     }

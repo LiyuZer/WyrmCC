@@ -45,7 +45,10 @@ fn parse_pointer_decl_addr_deref_assign() {
         Stmt::ExprStmt(Expr::Assign { name, value }) => {
             assert_eq!(name, "p");
             match &**value {
-                Expr::Unary { op: UnaryOp::AddrOf, expr } => {
+                Expr::Unary {
+                    op: UnaryOp::AddrOf,
+                    expr,
+                } => {
                     assert!(matches!(&**expr, Expr::Ident(s) if s == "x"));
                 }
                 other => panic!("expected &x, got {:?}", other),

@@ -13,7 +13,10 @@ fn struct_mixed_int_ptr_layout() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let (smap, _umap) = build_record_layouts(&tu);
-    let s = smap.get("").or_else(|| smap.get("Mix")).expect("struct layout present");
+    let s = smap
+        .get("")
+        .or_else(|| smap.get("Mix"))
+        .expect("struct layout present");
 
     let (off_a, _ty_a) = s.members.get("a").expect("field a");
     let (off_p, _ty_p) = s.members.get("p").expect("field p");
@@ -37,9 +40,15 @@ fn union_int_and_ptr_layout() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let (_smap, umap) = build_record_layouts(&tu);
-    let u = umap.get("").or_else(|| umap.get("U")).expect("union layout present");
+    let u = umap
+        .get("")
+        .or_else(|| umap.get("U"))
+        .expect("union layout present");
 
-    assert_eq!(u.size, 8, "union size = max( sizeof(int)=4, sizeof(ptr)=8 )");
+    assert_eq!(
+        u.size, 8,
+        "union size = max( sizeof(int)=4, sizeof(ptr)=8 )"
+    );
     assert_eq!(u.align, 8, "union align = max(member align) = 8");
     assert!(u.members.get("i").is_some());
     assert!(u.members.get("p").is_some());
@@ -56,7 +65,10 @@ fn struct_int_then_ptr_layout_s() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let (smap, _umap) = build_record_layouts(&tu);
-    let s = smap.get("").or_else(|| smap.get("S")).expect("struct S layout");
+    let s = smap
+        .get("")
+        .or_else(|| smap.get("S"))
+        .expect("struct S layout");
 
     let (off_a, _ty_a) = s.members.get("a").expect("field a");
     let (off_p, _ty_p) = s.members.get("p").expect("field p");
@@ -78,7 +90,10 @@ fn struct_ptr_then_int_layout_t() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let (smap, _umap) = build_record_layouts(&tu);
-    let s = smap.get("").or_else(|| smap.get("T")).expect("struct T layout");
+    let s = smap
+        .get("")
+        .or_else(|| smap.get("T"))
+        .expect("struct T layout");
 
     let (off_p, _ty_p) = s.members.get("p").expect("field p");
     let (off_a, _ty_a) = s.members.get("a").expect("field a");
@@ -109,7 +124,10 @@ fn nested_struct_alignment_propagation_o() {
     let (off_a, _ty_a) = i_l.members.get("a").expect("I.a");
     assert_eq!(*off_a, 0, "I.a@0");
 
-    let o = smap.get("").or_else(|| smap.get("O")).expect("struct O layout");
+    let o = smap
+        .get("")
+        .or_else(|| smap.get("O"))
+        .expect("struct O layout");
     let (off_x, _ty_x) = o.members.get("x").expect("field x");
     let (off_i, _ty_i) = o.members.get("i").expect("field i");
     let (off_q, _ty_q) = o.members.get("q").expect("field q");
@@ -132,7 +150,10 @@ fn struct_two_ints_size_align_p() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let (smap, _umap) = build_record_layouts(&tu);
-    let p = smap.get("").or_else(|| smap.get("P")).expect("struct P layout");
+    let p = smap
+        .get("")
+        .or_else(|| smap.get("P"))
+        .expect("struct P layout");
 
     let (off_x, _ty_x) = p.members.get("x").expect("x");
     let (off_y, _ty_y) = p.members.get("y").expect("y");

@@ -17,7 +17,11 @@ fn variadic_function_header() {
     );
 
     // Prologue still stores incoming named arg into alloca
-    assert!(ir.contains("%a.addr = alloca i32"), "missing a.addr alloca:\n{}", ir);
+    assert!(
+        ir.contains("%a.addr = alloca i32"),
+        "missing a.addr alloca:\n{}",
+        ir
+    );
     assert!(
         ir.contains("store i32 %a, ptr %a.addr"),
         "missing store of %a to %a.addr:\n{}",

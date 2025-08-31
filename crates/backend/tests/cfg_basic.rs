@@ -15,7 +15,13 @@ fn if_else_ir_patterns() {
             params: vec![],
             variadic: false,
             body: vec![
-                Stmt::Decl { name: "x".into(), ty: Type::Int, init: Some(Expr::IntLiteral("1".into())), storage: None, quals: Qualifiers::none() },
+                Stmt::Decl {
+                    name: "x".into(),
+                    ty: Type::Int,
+                    init: Some(Expr::IntLiteral("1".into())),
+                    storage: None,
+                    quals: Qualifiers::none(),
+                },
                 Stmt::If {
                     cond: Expr::Ident("x".into()),
                     then_branch: vec![Stmt::Return(Expr::IntLiteral("2".into()))],
@@ -31,10 +37,26 @@ fn if_else_ir_patterns() {
 
     let ir = ir_for(&tu);
     // Should produce compare to zero for x, a conditional branch, labels, and both returns.
-    assert!(ir.contains("icmp ne i32"), "expected integer-to-bool compare in IR:\n{}", ir);
-    assert!(ir.contains(" br i1 "), "expected conditional branch in IR:\n{}", ir);
-    assert!(ir.contains("\nL") && ir.contains(":"), "expected label blocks in IR:\n{}", ir);
-    assert!(ir.contains("ret i32 2") && ir.contains("ret i32 3"), "expected both return values in IR:\n{}", ir);
+    assert!(
+        ir.contains("icmp ne i32"),
+        "expected integer-to-bool compare in IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains(" br i1 "),
+        "expected conditional branch in IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\nL") && ir.contains(":"),
+        "expected label blocks in IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ret i32 2") && ir.contains("ret i32 3"),
+        "expected both return values in IR:\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -47,7 +69,13 @@ fn while_break_continue_patterns() {
             params: vec![],
             variadic: false,
             body: vec![
-                Stmt::Decl { name: "i".into(), ty: Type::Int, init: Some(Expr::IntLiteral("0".into())), storage: None, quals: Qualifiers::none() },
+                Stmt::Decl {
+                    name: "i".into(),
+                    ty: Type::Int,
+                    init: Some(Expr::IntLiteral("0".into())),
+                    storage: None,
+                    quals: Qualifiers::none(),
+                },
                 Stmt::While {
                     cond: Expr::Binary {
                         op: BinaryOp::Lt,
@@ -104,8 +132,20 @@ fn while_break_continue_patterns() {
 
     let ir = ir_for(&tu);
     // Expect control-flow structure present
-    assert!(ir.contains("icmp") && ir.matches(" br ").count() > 1, "expected multiple branches in IR:\n{}", ir);
-    assert!(ir.contains("\nL") && ir.contains(":"), "expected several labels in IR:\n{}", ir);
+    assert!(
+        ir.contains("icmp") && ir.matches(" br ").count() > 1,
+        "expected multiple branches in IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("\nL") && ir.contains(":"),
+        "expected several labels in IR:\n{}",
+        ir
+    );
     // The loop should have a backedge or uncond branch to a label
-    assert!(ir.contains("br label %L"), "expected backedge or uncond branch to a label:\n{}", ir);
+    assert!(
+        ir.contains("br label %L"),
+        "expected backedge or uncond branch to a label:\n{}",
+        ir
+    );
 }

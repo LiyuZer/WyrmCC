@@ -19,8 +19,16 @@ fn global_int_emission() {
     );
 
     // Expect a load from @g and an add
-    assert!(ir.contains("load i32, ptr @g"), "expected load from global @g, IR:\n{}", ir);
-    assert!(ir.contains(" add i32 ") || ir.contains("add i32"), "expected add instruction using g, IR:\n{}", ir);
+    assert!(
+        ir.contains("load i32, ptr @g"),
+        "expected load from global @g, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains(" add i32 ") || ir.contains("add i32"),
+        "expected add instruction using g, IR:\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -40,7 +48,11 @@ fn global_zero_init() {
         ir
     );
     // And a load from @g
-    assert!(ir.contains("load i32, ptr @g"), "expected load from @g in main, IR:\n{}", ir);
+    assert!(
+        ir.contains("load i32, ptr @g"),
+        "expected load from @g in main, IR:\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -54,9 +66,21 @@ fn global_ptr_to_string() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Expect a string constant and a global pointer initialized to it
-    assert!(ir.contains("@.str") || ir.contains("@str"), "expected emitted string constant, IR:\n{}", ir);
-    assert!(ir.contains("@p = global ptr"), "expected global pointer @p, IR:\n{}", ir);
+    assert!(
+        ir.contains("@.str") || ir.contains("@str"),
+        "expected emitted string constant, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("@p = global ptr"),
+        "expected global pointer @p, IR:\n{}",
+        ir
+    );
 
     // Some backends bitcast or use gep; be flexible but ensure the compare exists
-    assert!(ir.contains("icmp ") && (ir.contains(" ne ") || ir.contains(" eq ") ), "expected icmp using p in main, IR:\n{}", ir);
+    assert!(
+        ir.contains("icmp ") && (ir.contains(" ne ") || ir.contains(" eq ")),
+        "expected icmp using p in main, IR:\n{}",
+        ir
+    );
 }

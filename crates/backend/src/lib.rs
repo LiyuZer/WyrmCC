@@ -1,5 +1,7 @@
 use anyhow::Result;
-use parse::ast::{BinaryOp, Expr, Function as AstFn, RecordKind, Stmt, TranslationUnit, Type, UnaryOp};
+use parse::ast::{
+    BinaryOp, Expr, Function as AstFn, RecordKind, Stmt, TranslationUnit, Type, UnaryOp,
+};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -16,17 +18,25 @@ pub fn emit_llvm_ir(tu: &TranslationUnit, module_name: &str) -> Result<String> {
 
 // Simple record layout structs for backend lowering
 #[derive(Debug, Clone)]
-struct StructLayout { size: usize, align: usize, members: HashMap<String, (usize, Type)> }
+struct StructLayout {
+    size: usize,
+    align: usize,
+    members: HashMap<String, (usize, Type)>,
+}
 #[derive(Debug, Clone)]
-struct UnionLayout { size: usize, align: usize, members: HashMap<String, Type> }
+struct UnionLayout {
+    size: usize,
+    align: usize,
+    members: HashMap<String, Type>,
+}
 
 struct Emitter {
     module_name: String,
     // text buffers
-    buf: String,              // function bodies
-    decls: Vec<String>,       // declare lines
+    buf: String,        // function bodies
+    decls: Vec<String>, // declare lines
     decls_seen: HashSet<String>,
-    globals: Vec<String>,     // global constants/vars
+    globals: Vec<String>, // global constants/vars
     // Map of global names to their types for identifier resolution
     global_types: HashMap<String, Type>,
 
@@ -42,7 +52,7 @@ struct Emitter {
     tmp: usize,
     label: usize,
     locals: HashMap<String, String>, // name -> %alloca symbol (ptr to storage) or @global for static locals
-    locals_ty: HashMap<String, Type>,// name -> declared type
+    locals_ty: HashMap<String, Type>, // name -> declared type
     consts: HashMap<String, i32>,    // name -> constant value if known (ints only)
     loop_stack: Vec<(String, String)>, // (break_label, continue_label)
     switch_stack: Vec<String>,       // break targets for switches (reserved)
@@ -50,7 +60,7 @@ struct Emitter {
     terminated: bool,
     // New: goto/labels support
     user_labels: HashMap<String, String>, // C label name -> LLVM label name
-    in_block: bool,                        // whether a basic block has started
+    in_block: bool,                       // whether a basic block has started
 
     // Current function name (for static local mangling)
     current_fn: String,
@@ -90,8 +100,12 @@ impl Emitter {
     fn finish(self) -> String {
         let mut out = String::new();
         let _ = writeln!(&mut out, "; ModuleID = '{}'", self.module_name);
-        for d in &self.decls { let _ = writeln!(&mut out, "{}", d); }
-        for g in &self.globals { let _ = writeln!(&mut out, "{}", g); }
+        for d in &self.decls {
+            let _ = writeln!(&mut out, "{}", d);
+        }
+        for g in &self.globals {
+            let _ = writeln!(&mut out, "{}", g);
+        }
         out.push_str(&self.buf);
         out
     }
@@ -117,8 +131,14 @@ impl Emitter {
         // do not clear current_fn or static_locals_emitted here
     }
 
-    fn new_tmp(&mut self) -> String { self.tmp += 1; format!("%tmp{}", self.tmp) }
-    fn new_label(&mut self) -> String { self.label += 1; format!("L{}", self.label) }
+    fn new_tmp(&mut self) -> String {
+        self.tmp += 1;
+        format!("%tmp{}", self.tmp)
+    }
+    fn new_label(&mut self) -> String {
+        self.label += 1;
+        format!("L{}", self.label)
+    }
 
     // Ensure/lookup LLVM label name for a given C label
     fn ensure_user_label(&mut self, name: &str) -> String {
@@ -138,14 +158,22 @@ impl Emitter {
     }
 
     fn br_uncond(&mut self, target: &str) {
-        if self.terminated { return; }
+        if self.terminated {
+            return;
+        }
         let _ = writeln!(self.buf, "  br label %{}", target);
         self.terminated = true;
     }
 
     fn br_cond(&mut self, cond_i1: &str, then_lbl: &str, else_lbl: &str) {
-        if self.terminated { return; }
-        let _ = writeln!(self.buf, "  br i1 {}, label %{}, label %{}", cond_i1, then_lbl, else_lbl);
+        if self.terminated {
+            return;
+        }
+        let _ = writeln!(
+            self.buf,
+            "  br i1 {}, label %{}, label %{}",
+            cond_i1, then_lbl, else_lbl
+        );
         self.terminated = true;
     }
 
@@ -167,7 +195,14 @@ impl Emitter {
                         off = off.saturating_add(s);
                     }
                     let size = round_up(off, max_align.max(1));
-                    self.struct_layouts.insert(r.tag.clone(), StructLayout { size, align: max_align.max(1), members: map });
+                    self.struct_layouts.insert(
+                        r.tag.clone(),
+                        StructLayout {
+                            size,
+                            align: max_align.max(1),
+                            members: map,
+                        },
+                    );
                 }
                 RecordKind::Union => {
                     let mut size = 0usize;
@@ -181,7 +216,14 @@ impl Emitter {
                         map.insert(name.clone(), ty.clone());
                     }
                     let size = round_up(size, max_align.max(1));
-                    self.union_layouts.insert(r.tag.clone(), UnionLayout { size, align: max_align.max(1), members: map });
+                    self.union_layouts.insert(
+                        r.tag.clone(),
+                        UnionLayout {
+                            size,
+                            align: max_align.max(1),
+                            members: map,
+                        },
+                    );
                 }
             }
         }
@@ -198,12 +240,14 @@ impl Emitter {
             Type::Pointer(_) => 8,
             Type::Array(inner, n) => n.saturating_mul(self.sizeof_t_usize(inner)),
             Type::Struct(tag) => self.struct_layouts.get(tag).map(|l| l.size).unwrap_or(0),
-            Type::Union(tag)  => self.union_layouts.get(tag).map(|l| l.size).unwrap_or(0),
+            Type::Union(tag) => self.union_layouts.get(tag).map(|l| l.size).unwrap_or(0),
             Type::Func { .. } => 0,
             Type::Enum(_) | Type::Named(_) => 4,
         }
     }
-    fn sizeof_t(&self, ty: &Type) -> i32 { self.sizeof_t_usize(ty) as i32 }
+    fn sizeof_t(&self, ty: &Type) -> i32 {
+        self.sizeof_t_usize(ty) as i32
+    }
 
     fn alignof_t(&self, ty: &Type) -> usize {
         match ty {
@@ -222,7 +266,6 @@ impl Emitter {
         }
     }
 
-    // ===== Globals =====
     fn emit_globals(&mut self, tu: &TranslationUnit) -> Result<()> {
         use parse::ast::Storage;
         #[derive(Clone)]
@@ -234,10 +277,103 @@ impl Emitter {
         }
         fn prio(storage: &Option<Storage>, init: &Option<Expr>) -> i32 {
             match storage {
-                Some(Storage::Extern) => 1,                  // lowest priority
-                _ => if init.is_some() { 3 } else { 2 },     // def with init > tentative
+                Some(Storage::Extern) => 1, // lowest priority
+                _ => {
+                    if init.is_some() {
+                        3
+                    } else {
+                        2
+                    }
+                } // def with init > tentative
             }
         }
+
+        // Helper: parse constant int from Expr (fallback 0)
+        fn expr_to_i32(e: &Expr) -> i32 {
+            match e {
+                Expr::IntLiteral(repr) => parse_int_repr(repr),
+                _ => 0,
+            }
+        }
+
+        // Helper: format [N x i32] for 1D int arrays
+        let fmt_i32_arr_ty = |n: usize| -> String { format!("[{} x i32]", n) };
+
+        // Helper: format [N x i8] for char arrays
+        let fmt_i8_arr_ty = |n: usize| -> String { format!("[{} x i8]", n) };
+
+        // Helper: build constant for 1D int array from items; zero-fill to len
+        let build_i32_array_vals = |items: &Vec<Expr>, len: usize| -> String {
+            let mut parts: Vec<String> = Vec::new();
+            for i in 0..len {
+                let v = if i < items.len() { expr_to_i32(&items[i]) } else { 0 };
+                parts.push(format!("i32 {}", v));
+            }
+            format!("[ {} ]", parts.join(", "))
+        };
+
+        // Helper: build constant for 2D int array [[cols x i32] [...], ...]
+        let build_i32_array_2d_vals = |rows_expr: &Vec<Expr>, rows: usize, cols: usize| -> String {
+            let inner_ty = fmt_i32_arr_ty(cols);
+            let mut row_consts: Vec<String> = Vec::new();
+            for r in 0..rows {
+                let row_items: Vec<Expr> = if r < rows_expr.len() {
+                    if let Expr::InitList(vs) = &rows_expr[r] { vs.clone() } else { Vec::new() }
+                } else {
+                    Vec::new()
+                };
+                let mut elems: Vec<String> = Vec::new();
+                for c in 0..cols {
+                    let v = if c < row_items.len() { expr_to_i32(&row_items[c]) } else { 0 };
+                    elems.push(format!("i32 {}", v));
+                }
+                row_consts.push(format!("{} [ {} ]", inner_ty, elems.join(", ")));
+            }
+            format!("[ {} ]", row_consts.join(", "))
+        };
+
+        // Helper: build constant bytes for char arrays. Prefer c"..." if exact length, else explicit list.
+        let build_i8_bytes = |bytes: Vec<u8>, target_len: usize| -> String {
+            if bytes.len() == target_len {
+                let enc = llvm_escape_c_bytes(&bytes);
+                format!("c\"{}\"", enc)
+            } else {
+                let mut parts: Vec<String> = bytes.into_iter().map(|b| format!("i8 {}", b)).collect();
+                while parts.len() < target_len { parts.push("i8 0".to_string()); }
+                format!("[ {} ]", parts.join(", "))
+            }
+        };
+
+        // Helper: struct type and value strings for structs with scalar int members.
+        let build_struct_ints = |this: &Emitter, tag: &str, items: &Vec<Expr>| -> Option<(String, String)> {
+            let sl = this.struct_layouts.get(tag)?;
+            // Collect members in offset order
+            let mut ordered: Vec<(usize, Type)> = sl
+                .members
+                .iter()
+                .map(|(_n, (off, ty))| (*off, ty.clone()))
+                .collect();
+            ordered.sort_by_key(|(o, _)| *o);
+            let mut ty_parts: Vec<String> = Vec::new();
+            let mut val_parts: Vec<String> = Vec::new();
+            for (i, (_off, fty)) in ordered.iter().enumerate() {
+                match fty {
+                    Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Short | Type::UShort | Type::Enum(_) | Type::Named(_) | Type::Char | Type::SChar | Type::UChar => {
+                        ty_parts.push("i32".to_string());
+                        let v = if i < items.len() { expr_to_i32(&items[i]) } else { 0 };
+                        val_parts.push(format!("i32 {}", v));
+                    }
+                    Type::Pointer(_) => {
+                        ty_parts.push("ptr".to_string());
+                        // Only allow null for v1; non-null not handled in this helper
+                        val_parts.push("ptr null".to_string());
+                    }
+                    // Not supported in this v1 helper
+                    _ => return None,
+                }
+            }
+            Some((format!("{{ {} }}", ty_parts.join(", ")), format!("{{ {} }}", val_parts.join(", "))))
+        };
 
         // First pass: choose exactly one representative per global name
         let mut chosen: HashMap<String, Chosen> = HashMap::new();
@@ -266,6 +402,7 @@ impl Emitter {
         for (_k, g) in chosen {
             let is_extern = matches!(g.storage, Some(Storage::Extern));
             let is_static = matches!(g.storage, Some(Storage::Static));
+            let linkage = if is_static { "internal " } else { "" };
             match &g.ty {
                 Type::Int => {
                     if is_extern {
@@ -280,7 +417,6 @@ impl Emitter {
                         } else {
                             "zeroinitializer".to_string()
                         };
-                        let linkage = if is_static { "internal " } else { "" };
                         let def = format!("@{} = {}global i32 {}", g.name, linkage, init_str);
                         self.globals.push(def);
                     }
@@ -294,22 +430,160 @@ impl Emitter {
                             match init {
                                 Expr::StringLiteral(repr) => {
                                     let (sname, len) = self.ensure_string_global_from_repr(repr);
-                                    format!("getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)", len, sname)
+                                    format!(
+                                        "getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)",
+                                        len, sname
+                                    )
                                 }
                                 Expr::Cast { expr, .. } => {
                                     if let Expr::StringLiteral(repr) = &**expr {
                                         let (sname, len) = self.ensure_string_global_from_repr(repr);
                                         format!("getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)", len, sname)
-                                    } else { "null".to_string() }
+                                    } else {
+                                        "null".to_string()
+                                    }
                                 }
                                 Expr::IntLiteral(s) => {
                                     if parse_int_repr(s) == 0 { "null".to_string() } else { "null".to_string() }
                                 }
                                 _ => "null".to_string(),
                             }
-                        } else { "null".to_string() };
-                        let linkage = if is_static { "internal " } else { "" };
+                        } else {
+                            "null".to_string()
+                        };
                         let def = format!("@{} = {}global ptr {}", g.name, linkage, init_val);
+                        self.globals.push(def);
+                    }
+                }
+                Type::Array(inner, n) => {
+                    // Arrays: support int arrays (1D/2D) and char arrays from string literals.
+                    match &**inner {
+                        // char-like arrays -> i8 payload
+                        Type::Char | Type::SChar | Type::UChar => {
+                            let (ty_str, val_str) = if let Some(init) = &g.init {
+                                match init {
+                                    Expr::StringLiteral(repr) => {
+                                        let bytes = decode_c_string(repr);
+                                        let target_len = if *n == 0 { bytes.len() } else { *n };
+                                        (fmt_i8_arr_ty(target_len), build_i8_bytes(bytes, target_len))
+                                    }
+                                    Expr::Cast { expr: inner_expr, .. } => {
+                                        if let Expr::StringLiteral(repr2) = &**inner_expr {
+                                            let bytes = decode_c_string(repr2);
+                                            let target_len = if *n == 0 { bytes.len() } else { *n };
+                                            (fmt_i8_arr_ty(target_len), build_i8_bytes(bytes, target_len))
+                                        } else {
+                                            let target_len = if *n == 0 { 0 } else { *n };
+                                            let val = if target_len == 0 {
+                                                "zeroinitializer".to_string()
+                                            } else {
+                                                format!("[ {} ]", vec!["i8 0".to_string(); target_len].join(", "))
+                                            };
+                                            (fmt_i8_arr_ty(target_len), val)
+                                        }
+                                    }
+                                    Expr::InitList(items) => {
+                                        let target_len = if *n == 0 { items.len() } else { *n };
+                                        let mut bytes: Vec<u8> = Vec::new();
+                                        for i in 0..target_len {
+                                            bytes.push(if i < items.len() { expr_to_i32(&items[i]) as u8 } else { 0 });
+                                        }
+                                        (fmt_i8_arr_ty(target_len), build_i8_bytes(bytes, target_len))
+                                    }
+                                    _ => {
+                                        let target_len = if *n == 0 { 0 } else { *n };
+                                        let val = if target_len == 0 {
+                                            "zeroinitializer".to_string()
+                                        } else {
+                                            format!("[ {} ]", vec!["i8 0".to_string(); target_len].join(", "))
+                                        };
+                                        (fmt_i8_arr_ty(target_len), val)
+                                    }
+                                }
+                            } else {
+                                let target_len = if *n == 0 { 0 } else { *n };
+                                let val = if target_len == 0 {
+                                    "zeroinitializer".to_string()
+                                } else {
+                                    format!("[ {} ]", vec!["i8 0".to_string(); target_len].join(", "))
+                                };
+                                (fmt_i8_arr_ty(target_len), val)
+                            };
+                            if is_extern {
+                                let def = format!("@{} = external global {}", g.name, ty_str);
+                                self.globals.push(def);
+                            } else {
+                                let def = format!("@{} = {}global {} {}", g.name, linkage, ty_str, val_str);
+                                self.globals.push(def);
+                            }
+                        }
+                        // 2D int arrays
+                        Type::Array(inner2, n2) if matches!(&**inner2, Type::Int | Type::UInt) => {
+                            let rows = if *n == 0 { if let Some(Expr::InitList(vs)) = &g.init { vs.len() } else { 0 } } else { *n };
+                            let cols = *n2; // assume sized inner for v1
+                            let inner_ty_str = self.llvm_int_array_type_str(&*inner).unwrap_or_else(|| fmt_i32_arr_ty(cols));
+                            let ty_str = format!("[{} x {}]", rows, inner_ty_str);
+                            let val_str = if let Some(Expr::InitList(rows_items)) = &g.init {
+                                build_i32_array_2d_vals(rows_items, rows, cols)
+                            } else {
+                                let zero_row = format!("{} [ {} ]", inner_ty_str, vec!["i32 0".to_string(); cols].join(", "));
+                                format!("[ {} ]", vec![zero_row; rows].join(", "))
+                            };
+                            if is_extern {
+                                let def = format!("@{} = external global {}", g.name, ty_str);
+                                self.globals.push(def);
+                            } else {
+                                let def = format!("@{} = {}global {} {}", g.name, linkage, ty_str, val_str);
+                                self.globals.push(def);
+                            }
+                        }
+                        // 1D int arrays
+                        Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Short | Type::UShort | Type::Enum(_) | Type::Named(_) => {
+                            let len = if *n == 0 { if let Some(Expr::InitList(vs)) = &g.init { vs.len() } else { 0 } } else { *n };
+                            let ty_str = fmt_i32_arr_ty(len);
+                            let val_str = if let Some(Expr::InitList(items)) = &g.init {
+                                build_i32_array_vals(items, len)
+                            } else {
+                                format!("[ {} ]", vec!["i32 0".to_string(); len].join(", "))
+                            };
+                            if is_extern {
+                                let def = format!("@{} = external global {}", g.name, ty_str);
+                                self.globals.push(def);
+                            } else {
+                                let def = format!("@{} = {}global {} {}", g.name, linkage, ty_str, val_str);
+                                self.globals.push(def);
+                            }
+                        }
+                        _ => {
+                            // Fallback: treat as byte buffer sized by sizeof_t
+                            let total_sz = self.sizeof_t_usize(&g.ty);
+                            if is_extern {
+                                let def = format!("@{} = external global i8", g.name);
+                                self.globals.push(def);
+                            } else {
+                                let def = format!("@{} = {}global i8 zeroinitializer ; size {} bytes (opaque)", g.name, linkage, total_sz);
+                                self.globals.push(def);
+                            }
+                        }
+                    }
+                }
+                Type::Struct(tag) => {
+                    // Structs with scalar int members
+                    if is_extern {
+                        if let Some((ty_s, _)) = build_struct_ints(self, tag, &Vec::new()) {
+                            let def = format!("@{} = external global {}", g.name, ty_s);
+                            self.globals.push(def);
+                        } else {
+                            let def = format!("@{} = external global i32", g.name);
+                            self.globals.push(def);
+                        }
+                    } else {
+                        let (ty_s, val_s) = if let Some(Expr::InitList(items)) = &g.init {
+                            if let Some((t, v)) = build_struct_ints(self, tag, items) { (t, v) } else { ("i32".to_string(), "zeroinitializer".to_string()) }
+                        } else {
+                            if let Some((t, v)) = build_struct_ints(self, tag, &Vec::new()) { (t, v) } else { ("i32".to_string(), "zeroinitializer".to_string()) }
+                        };
+                        let def = format!("@{} = {}global {} {}", g.name, linkage, ty_s, val_s);
                         self.globals.push(def);
                     }
                 }
@@ -318,7 +592,6 @@ impl Emitter {
                         let def = format!("@{} = external global i32", g.name);
                         self.globals.push(def);
                     } else {
-                        let linkage = if is_static { "internal " } else { "" };
                         let def = format!("@{} = {}global i32 0", g.name, linkage);
                         self.globals.push(def);
                     }
@@ -333,30 +606,46 @@ impl Emitter {
         let bytes = decode_c_string(repr);
         if let Some((gname, len)) = self.str_pool.get(&bytes).cloned() {
             let tmp = self.new_tmp();
-            let _ = writeln!(self.buf, "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0", tmp, len, gname);
+            let _ = writeln!(
+                self.buf,
+                "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
+                tmp, len, gname
+            );
             return tmp;
         }
         let len = bytes.len();
         let gname = format!("@.str.{}", self.next_str_id);
         self.next_str_id += 1;
         let enc = llvm_escape_c_bytes(&bytes);
-        let def = format!("{} = private unnamed_addr constant [{} x i8] c\"{}\"", gname, len, enc);
+        let def = format!(
+            "{} = private unnamed_addr constant [{} x i8] c\"{}\"",
+            gname, len, enc
+        );
         self.globals.push(def);
         self.str_pool.insert(bytes, (gname.clone(), len));
         let tmp = self.new_tmp();
-        let _ = writeln!(self.buf, "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0", tmp, len, gname);
+        let _ = writeln!(
+            self.buf,
+            "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
+            tmp, len, gname
+        );
         tmp
     }
 
     // Ensure a string global exists for the given literal repr; return (global_name, len)
     fn ensure_string_global_from_repr(&mut self, repr: &str) -> (String, usize) {
         let bytes = decode_c_string(repr);
-        if let Some((gname, len)) = self.str_pool.get(&bytes).cloned() { return (gname, len); }
+        if let Some((gname, len)) = self.str_pool.get(&bytes).cloned() {
+            return (gname, len);
+        }
         let len = bytes.len();
         let gname = format!("@.str.{}", self.next_str_id);
         self.next_str_id += 1;
         let enc = llvm_escape_c_bytes(&bytes);
-        let def = format!("{} = private unnamed_addr constant [{} x i8] c\"{}\"", gname, len, enc);
+        let def = format!(
+            "{} = private unnamed_addr constant [{} x i8] c\"{}\"",
+            gname, len, enc
+        );
         self.globals.push(def);
         self.str_pool.insert(bytes, (gname.clone(), len));
         (gname, len)
@@ -375,13 +664,25 @@ impl Emitter {
         };
 
         // Emit function header with parameters (all params i32 for now)
-        let pvec = f.params.iter().map(|p| format!("i32 %{}", p.name)).collect::<Vec<_>>();
+        let pvec = f
+            .params
+            .iter()
+            .map(|p| format!("i32 %{}", p.name))
+            .collect::<Vec<_>>();
         let params = if f.variadic {
-            if pvec.is_empty() { "...".to_string() } else { format!("{}, ...", pvec.join(", ")) }
+            if pvec.is_empty() {
+                "...".to_string()
+            } else {
+                format!("{}, ...", pvec.join(", "))
+            }
         } else {
             pvec.join(", ")
         };
-        let def_kw = if matches!(f.storage, Some(parse::ast::Storage::Static)) { "define internal" } else { "define" };
+        let def_kw = if matches!(f.storage, Some(parse::ast::Storage::Static)) {
+            "define internal"
+        } else {
+            "define"
+        };
         let _ = writeln!(self.buf, "{} {} @{}({}) {{", def_kw, ret_ty, f.name, params);
         for p in &f.params {
             let alloca_name = format!("%{}.addr", p.name);
@@ -399,8 +700,12 @@ impl Emitter {
 
         if !self.terminated {
             match f.ret_type {
-                Type::Void => { let _ = writeln!(self.buf, "  ret void"); }
-                _ => { let _ = writeln!(self.buf, "  ret i32 0"); }
+                Type::Void => {
+                    let _ = writeln!(self.buf, "  ret void");
+                }
+                _ => {
+                    let _ = writeln!(self.buf, "  ret i32 0");
+                }
             }
         }
         let _ = writeln!(self.buf, "}}");
@@ -418,7 +723,10 @@ impl Emitter {
     fn expr_is_pointer(&self, e: &Expr) -> bool {
         match e {
             Expr::StringLiteral(_) => true,
-            Expr::Unary { op: UnaryOp::AddrOf, .. } => true,
+            Expr::Unary {
+                op: UnaryOp::AddrOf,
+                ..
+            } => true,
             // Identifiers: treat known pointer locals and arrays (which decay) as pointer-valued
             Expr::Ident(name) => match self.locals_ty.get(name) {
                 Some(Type::Pointer(_)) => true,
@@ -433,7 +741,9 @@ impl Emitter {
                         Type::Pointer(_) => true,
                         _ => false,
                     }
-                } else { false }
+                } else {
+                    false
+                }
             }
             // Cast target type is a pointer
             Expr::Cast { ty, .. } => matches!(ty, Type::Pointer(_)),
@@ -460,9 +770,11 @@ impl Emitter {
     // Very lightweight type inference sufficient for arrays/pointers in this backend stage
     fn type_of_expr(&self, e: &Expr) -> Option<Type> {
         match e {
-            Expr::Ident(name) => {
-                self.locals_ty.get(name).cloned().or_else(|| self.global_types.get(name).cloned())
-            }
+            Expr::Ident(name) => self
+                .locals_ty
+                .get(name)
+                .cloned()
+                .or_else(|| self.global_types.get(name).cloned()),
             Expr::Index { base, .. } => {
                 let bt = self.type_of_expr(base)?;
                 match bt {
@@ -471,11 +783,19 @@ impl Emitter {
                     _ => None,
                 }
             }
-            Expr::Unary { op: UnaryOp::AddrOf, expr } => {
-                self.type_of_expr(expr).map(|t| Type::Pointer(Box::new(t)))
-            }
-            Expr::Unary { op: UnaryOp::Deref, expr } => {
-                if let Some(Type::Pointer(inner)) = self.type_of_expr(expr) { Some(*inner) } else { None }
+            Expr::Unary {
+                op: UnaryOp::AddrOf,
+                expr,
+            } => self.type_of_expr(expr).map(|t| Type::Pointer(Box::new(t))),
+            Expr::Unary {
+                op: UnaryOp::Deref,
+                expr,
+            } => {
+                if let Some(Type::Pointer(inner)) = self.type_of_expr(expr) {
+                    Some(*inner)
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -486,7 +806,13 @@ impl Emitter {
         let base_ty = self.type_of_expr(base);
         let (bstr, _bc) = self.emit_expr(base);
         let (istr, ic) = self.emit_expr(index);
-        let idx64 = if let Some(c) = ic { format!("{}", c as i64) } else { let z = self.new_tmp(); let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr); z };
+        let idx64 = if let Some(c) = ic {
+            format!("{}", c as i64)
+        } else {
+            let z = self.new_tmp();
+            let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr);
+            z
+        };
         match base_ty {
             Some(Type::Array(inner, n)) => {
                 // If inner is array, step rows by one: gep [inner], ptr base, idx
@@ -494,29 +820,57 @@ impl Emitter {
                     Type::Array(_, _) => {
                         if let Some(inner_str) = self.llvm_int_array_type_str(&inner) {
                             let row = self.new_tmp();
-                            let _ = writeln!(self.buf, "  {} = getelementptr inbounds {}, ptr {}, i64 {}", row, inner_str, bstr, idx64);
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds {}, ptr {}, i64 {}",
+                                row, inner_str, bstr, idx64
+                            );
                             (row, *inner)
                         } else {
                             // Fallback: byte-gep
                             let elem_ptr = self.new_tmp();
                             let esz = self.sizeof_t_usize(&inner) as i64;
-                            let scaled = if esz == 1 { idx64 } else { let m = self.new_tmp(); let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz); m };
-                            let _ = writeln!(self.buf, "  {} = getelementptr inbounds i8, ptr {}, i64 {}", elem_ptr, bstr, scaled);
+                            let scaled = if esz == 1 {
+                                idx64
+                            } else {
+                                let m = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz);
+                                m
+                            };
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                elem_ptr, bstr, scaled
+                            );
                             (elem_ptr, *inner)
                         }
                     }
                     Type::Int | Type::UInt => {
                         // 1-D array case: base usually decayed to i32*, GEP i32
                         let ep = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = getelementptr inbounds i32, ptr {}, i64 {}", ep, bstr, idx64);
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = getelementptr inbounds i32, ptr {}, i64 {}",
+                            ep, bstr, idx64
+                        );
                         (ep, Type::Int)
                     }
                     other => {
                         // Non-int element: byte GEP
                         let elem_ptr = self.new_tmp();
                         let esz = self.sizeof_t_usize(&other) as i64;
-                        let scaled = if esz == 1 { idx64 } else { let m = self.new_tmp(); let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz); m };
-                        let _ = writeln!(self.buf, "  {} = getelementptr inbounds i8, ptr {}, i64 {}", elem_ptr, bstr, scaled);
+                        let scaled = if esz == 1 {
+                            idx64
+                        } else {
+                            let m = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz);
+                            m
+                        };
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                            elem_ptr, bstr, scaled
+                        );
                         (elem_ptr, other)
                     }
                 }
@@ -526,27 +880,55 @@ impl Emitter {
                     Type::Array(_, _) => {
                         if let Some(arr_str) = self.llvm_int_array_type_str(&inner) {
                             let row = self.new_tmp();
-                            let _ = writeln!(self.buf, "  {} = getelementptr inbounds {}, ptr {}, i64 {}", row, arr_str, bstr, idx64);
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds {}, ptr {}, i64 {}",
+                                row, arr_str, bstr, idx64
+                            );
                             (row, *inner)
                         } else {
                             // fallback to byte gep
                             let elem_ptr = self.new_tmp();
                             let esz = self.sizeof_t_usize(&inner) as i64;
-                            let scaled = if esz == 1 { idx64 } else { let m = self.new_tmp(); let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz); m };
-                            let _ = writeln!(self.buf, "  {} = getelementptr inbounds i8, ptr {}, i64 {}", elem_ptr, bstr, scaled);
+                            let scaled = if esz == 1 {
+                                idx64
+                            } else {
+                                let m = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz);
+                                m
+                            };
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                elem_ptr, bstr, scaled
+                            );
                             (elem_ptr, *inner)
                         }
                     }
                     Type::Int | Type::UInt => {
                         let ep = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = getelementptr inbounds i32, ptr {}, i64 {}", ep, bstr, idx64);
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = getelementptr inbounds i32, ptr {}, i64 {}",
+                            ep, bstr, idx64
+                        );
                         (ep, Type::Int)
                     }
                     other => {
                         let elem_ptr = self.new_tmp();
                         let esz = self.sizeof_t_usize(&other) as i64;
-                        let scaled = if esz == 1 { idx64 } else { let m = self.new_tmp(); let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz); m };
-                        let _ = writeln!(self.buf, "  {} = getelementptr inbounds i8, ptr {}, i64 {}", elem_ptr, bstr, scaled);
+                        let scaled = if esz == 1 {
+                            idx64
+                        } else {
+                            let m = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz);
+                            m
+                        };
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                            elem_ptr, bstr, scaled
+                        );
                         (elem_ptr, other)
                     }
                 }
@@ -554,7 +936,11 @@ impl Emitter {
             _ => {
                 // Fallback: treat as i32*
                 let ep = self.new_tmp();
-                let _ = writeln!(self.buf, "  {} = getelementptr inbounds i32, ptr {}, i64 {}", ep, bstr, idx64);
+                let _ = writeln!(
+                    self.buf,
+                    "  {} = getelementptr inbounds i32, ptr {}, i64 {}",
+                    ep, bstr, idx64
+                );
                 (ep, Type::Int)
             }
         }
@@ -591,7 +977,11 @@ impl Emitter {
                         .unwrap_or(Type::Struct(String::new()));
                     (ptr, ty)
                 }
-                Expr::Member { base: b2, field: f2, arrow: a2 } => {
+                Expr::Member {
+                    base: b2,
+                    field: f2,
+                    arrow: a2,
+                } => {
                     // Recursively compute pointer to the inner field and its type
                     let (p, fty) = self.emit_member_ptr(b2, f2, *a2);
                     (p, fty)
@@ -604,13 +994,41 @@ impl Emitter {
                             match aty {
                                 Type::Array(inner, _n) => {
                                     // Base pointer to array storage (byte buffer for non-int)
-                                    let arr_ptr = self.locals.get(aname).cloned().unwrap_or_else(|| "%0".to_string());
+                                    let arr_ptr = self
+                                        .locals
+                                        .get(aname)
+                                        .cloned()
+                                        .unwrap_or_else(|| "%0".to_string());
                                     let esz = self.sizeof_t_usize(&inner) as i64;
                                     let (istr, ic) = self.emit_expr(index);
-                                    let idx64 = if let Some(c) = ic { format!("{}", c as i64) } else { let z = self.new_tmp(); let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr); z };
-                                    let scaled = if esz == 1 { idx64 } else { let m = self.new_tmp(); let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz); m };
+                                    let idx64 = if let Some(c) = ic {
+                                        format!("{}", c as i64)
+                                    } else {
+                                        let z = self.new_tmp();
+                                        let _ = writeln!(
+                                            self.buf,
+                                            "  {} = zext i32 {} to i64",
+                                            z, istr
+                                        );
+                                        z
+                                    };
+                                    let scaled = if esz == 1 {
+                                        idx64
+                                    } else {
+                                        let m = self.new_tmp();
+                                        let _ = writeln!(
+                                            self.buf,
+                                            "  {} = mul i64 {}, {}",
+                                            m, idx64, esz
+                                        );
+                                        m
+                                    };
                                     let elem_ptr = self.new_tmp();
-                                    let _ = writeln!(self.buf, "  {} = getelementptr inbounds i8, ptr {}, i64 {}", elem_ptr, arr_ptr, scaled);
+                                    let _ = writeln!(
+                                        self.buf,
+                                        "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                        elem_ptr, arr_ptr, scaled
+                                    );
                                     match *inner.clone() {
                                         Type::Struct(tag) => (elem_ptr, Type::Struct(tag)),
                                         Type::Union(tag) => (elem_ptr, Type::Union(tag)),
@@ -622,10 +1040,34 @@ impl Emitter {
                                     let (bstr, _bc) = self.emit_expr(arr);
                                     let esz = self.sizeof_t_usize(&inner) as i64;
                                     let (istr, ic) = self.emit_expr(index);
-                                    let idx64 = if let Some(c) = ic { format!("{}", c as i64) } else { let z = self.new_tmp(); let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr); z };
-                                    let scaled = if esz == 1 { idx64 } else { let m = self.new_tmp(); let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz); m };
+                                    let idx64 = if let Some(c) = ic {
+                                        format!("{}", c as i64)
+                                    } else {
+                                        let z = self.new_tmp();
+                                        let _ = writeln!(
+                                            self.buf,
+                                            "  {} = zext i32 {} to i64",
+                                            z, istr
+                                        );
+                                        z
+                                    };
+                                    let scaled = if esz == 1 {
+                                        idx64
+                                    } else {
+                                        let m = self.new_tmp();
+                                        let _ = writeln!(
+                                            self.buf,
+                                            "  {} = mul i64 {}, {}",
+                                            m, idx64, esz
+                                        );
+                                        m
+                                    };
                                     let elem_ptr = self.new_tmp();
-                                    let _ = writeln!(self.buf, "  {} = getelementptr inbounds i8, ptr {}, i64 {}", elem_ptr, bstr, scaled);
+                                    let _ = writeln!(
+                                        self.buf,
+                                        "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                        elem_ptr, bstr, scaled
+                                    );
                                     match *inner.clone() {
                                         Type::Struct(tag) => (elem_ptr, Type::Struct(tag)),
                                         Type::Union(tag) => (elem_ptr, Type::Union(tag)),
@@ -641,9 +1083,19 @@ impl Emitter {
                         // Fallback: compute base pointer and assume element size 1 (byte) if unknown
                         let (bstr, _bc) = self.emit_expr(arr);
                         let (istr, ic) = self.emit_expr(index);
-                        let idx64 = if let Some(c) = ic { format!("{}", c as i64) } else { let z = self.new_tmp(); let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr); z };
+                        let idx64 = if let Some(c) = ic {
+                            format!("{}", c as i64)
+                        } else {
+                            let z = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr);
+                            z
+                        };
                         let elem_ptr = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = getelementptr inbounds i8, ptr {}, i64 {}", elem_ptr, bstr, idx64);
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                            elem_ptr, bstr, idx64
+                        );
                         (elem_ptr, Type::Struct(String::new()))
                     }
                 }
@@ -667,9 +1119,11 @@ impl Emitter {
                 };
                 if let (Some(off), Some(fty)) = (off_opt, fty_opt) {
                     let gep = self.new_tmp();
-                    let _ = writeln!(self.buf,
+                    let _ = writeln!(
+                        self.buf,
                         "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
-                        gep, base_ptr, off as i64);
+                        gep, base_ptr, off as i64
+                    );
                     return (gep, fty);
                 }
                 (base_ptr, Type::Int)
@@ -689,9 +1143,11 @@ impl Emitter {
                     };
                     if let (Some(off), Some(fty)) = (off_opt, fty_opt) {
                         let gep = self.new_tmp();
-                        let _ = writeln!(self.buf,
+                        let _ = writeln!(
+                            self.buf,
                             "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
-                            gep, base_ptr, off as i64);
+                            gep, base_ptr, off as i64
+                        );
                         return (gep, fty);
                     }
                     (base_ptr, Type::Int)
@@ -706,9 +1162,11 @@ impl Emitter {
                     };
                     if let Some(fty) = fty_opt {
                         let gep = self.new_tmp();
-                        let _ = writeln!(self.buf,
+                        let _ = writeln!(
+                            self.buf,
                             "  {} = getelementptr inbounds i8, ptr {}, i64 0",
-                            gep, base_ptr);
+                            gep, base_ptr
+                        );
                         return (gep, fty);
                     }
                     (base_ptr, Type::Int)
@@ -725,9 +1183,11 @@ impl Emitter {
                 };
                 if let Some(fty) = fty_opt {
                     let gep = self.new_tmp();
-                    let _ = writeln!(self.buf,
+                    let _ = writeln!(
+                        self.buf,
                         "  {} = getelementptr inbounds i8, ptr {}, i64 0",
-                        gep, base_ptr);
+                        gep, base_ptr
+                    );
                     return (gep, fty);
                 }
                 (base_ptr, Type::Int)
@@ -754,14 +1214,21 @@ impl Emitter {
                     match lty {
                         // Load all integer-like kinds as i32
                         Some(Type::Char) | Some(Type::SChar) | Some(Type::UChar)
-                        | Some(Type::Short) | Some(Type::UShort)
-                        | Some(Type::Int) | Some(Type::UInt)
-                        | Some(Type::Long) | Some(Type::ULong)
+                        | Some(Type::Short) | Some(Type::UShort) | Some(Type::Int)
+                        | Some(Type::UInt) | Some(Type::Long) | Some(Type::ULong)
                         | Some(Type::Enum(_)) | Some(Type::Named(_)) => {
                             let tmp = self.new_tmp();
                             let _ = writeln!(self.buf, "  {} = load i32, ptr {}", tmp, ptr);
-                            let c = if self.in_loop == 0 { self.consts.get(name).copied() } else { None };
-                            if let Some(v) = c { (format!("{}", v), c) } else { (tmp, None) }
+                            let c = if self.in_loop == 0 {
+                                self.consts.get(name).copied()
+                            } else {
+                                None
+                            };
+                            if let Some(v) = c {
+                                (format!("{}", v), c)
+                            } else {
+                                (tmp, None)
+                            }
                         }
                         Some(Type::Pointer(_)) => {
                             let tmp = self.new_tmp();
@@ -770,9 +1237,15 @@ impl Emitter {
                         }
                         Some(Type::Array(inner, n)) => {
                             // Decay to pointer to first element. For nested arrays of int, keep correct element type.
-                            if let Some(full_arr) = self.llvm_int_array_type_str(&Type::Array(inner.clone(), n)) {
+                            if let Some(full_arr) =
+                                self.llvm_int_array_type_str(&Type::Array(inner.clone(), n))
+                            {
                                 let dec = self.new_tmp();
-                                let _ = writeln!(self.buf, "  {} = getelementptr inbounds {}, ptr {}, i64 0, i64 0", dec, full_arr, ptr);
+                                let _ = writeln!(
+                                    self.buf,
+                                    "  {} = getelementptr inbounds {}, ptr {}, i64 0, i64 0",
+                                    dec, full_arr, ptr
+                                );
                                 (dec, None)
                             } else {
                                 // For non-int element arrays: return base storage pointer (i8 buffer)
@@ -786,11 +1259,17 @@ impl Emitter {
                 } else if let Some(gty) = self.global_types.get(name).cloned() {
                     match gty {
                         // Load all integer-like kinds as i32
-                        Type::Char | Type::SChar | Type::UChar
-                        | Type::Short | Type::UShort
-                        | Type::Int | Type::UInt
-                        | Type::Long | Type::ULong
-                        | Type::Enum(_) | Type::Named(_) => {
+                        Type::Char
+                        | Type::SChar
+                        | Type::UChar
+                        | Type::Short
+                        | Type::UShort
+                        | Type::Int
+                        | Type::UInt
+                        | Type::Long
+                        | Type::ULong
+                        | Type::Enum(_)
+                        | Type::Named(_) => {
                             let tmp = self.new_tmp();
                             let _ = writeln!(self.buf, "  {} = load i32, ptr @{}", tmp, name);
                             (tmp, None)
@@ -801,9 +1280,15 @@ impl Emitter {
                             (tmp, None)
                         }
                         Type::Array(inner, n) => {
-                            if let Some(full_arr) = self.llvm_int_array_type_str(&Type::Array(inner.clone(), n)) {
+                            if let Some(full_arr) =
+                                self.llvm_int_array_type_str(&Type::Array(inner.clone(), n))
+                            {
                                 let dec = self.new_tmp();
-                                let _ = writeln!(self.buf, "  {} = getelementptr inbounds {}, ptr @{}, i64 0, i64 0", dec, full_arr, name);
+                                let _ = writeln!(
+                                    self.buf,
+                                    "  {} = getelementptr inbounds {}, ptr @{}, i64 0, i64 0",
+                                    dec, full_arr, name
+                                );
                                 (dec, None)
                             } else {
                                 (format!("@{}", name), None)
@@ -838,21 +1323,38 @@ impl Emitter {
                         let (vstr, vc) = self.emit_expr(expr);
                         match vc {
                             Some(c) => (format!("{}", -c), Some(-c)),
-                            None => { let tmp = self.new_tmp(); let _ = writeln!(self.buf, "  {} = sub i32 0, {}", tmp, vstr); (tmp, None) }
+                            None => {
+                                let tmp = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = sub i32 0, {}", tmp, vstr);
+                                (tmp, None)
+                            }
                         }
                     }
                     UnaryOp::BitNot => {
                         let (vstr, vc) = self.emit_expr(expr);
                         match vc {
                             Some(c) => (format!("{}", !c), Some(!c)),
-                            None => { let tmp = self.new_tmp(); let _ = writeln!(self.buf, "  {} = xor i32 {}, -1", tmp, vstr); (tmp, None) }
+                            None => {
+                                let tmp = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = xor i32 {}, -1", tmp, vstr);
+                                (tmp, None)
+                            }
                         }
                     }
                     UnaryOp::LogicalNot => {
                         let (vstr, vc) = self.emit_expr(expr);
                         match vc {
-                            Some(c) => (format!("{}", if c == 0 {1} else {0}), Some(if c == 0 {1} else {0})),
-                            None => { let cmp = self.new_tmp(); let _ = writeln!(self.buf, "  {} = icmp eq i32 {}, 0", cmp, vstr); let z = self.new_tmp(); let _ = writeln!(self.buf, "  {} = zext i1 {} to i32", z, cmp); (z, None) }
+                            Some(c) => (
+                                format!("{}", if c == 0 { 1 } else { 0 }),
+                                Some(if c == 0 { 1 } else { 0 }),
+                            ),
+                            None => {
+                                let cmp = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = icmp eq i32 {}, 0", cmp, vstr);
+                                let z = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = zext i1 {} to i32", z, cmp);
+                                (z, None)
+                            }
                         }
                     }
                     UnaryOp::AddrOf => {
@@ -881,7 +1383,11 @@ impl Emitter {
                     }
                     UnaryOp::Deref => {
                         // Special-case *(&func) -> @func (no load)
-                        if let Expr::Unary { op: UnaryOp::AddrOf, expr: inner } = &**expr {
+                        if let Expr::Unary {
+                            op: UnaryOp::AddrOf,
+                            expr: inner,
+                        } = &**expr
+                        {
                             if let Expr::Ident(name) = &**inner {
                                 (format!("@{}", name), None)
                             } else {
@@ -898,9 +1404,8 @@ impl Emitter {
                         }
                     }
                 }
-            },
+            }
 
-            // Binary operations (pointer arithmetic, subtraction, integer ops, comparisons, logical)
             Expr::Binary { op, lhs, rhs } => {
                 // Pointer arithmetic via GEP when mixing ptr and int for +/-
                 if matches!(op, BinaryOp::Plus | BinaryOp::Minus) {
@@ -909,12 +1414,24 @@ impl Emitter {
                     if lhs_is_ptr && !rhs_is_ptr {
                         let (lv_str, _lv_c) = self.emit_expr(lhs);
                         let (rv_str, rv_c) = self.emit_expr(rhs);
-                        // immediate for literal; zext (+ optional sub) for non-literal
-                        let rhs_is_lit = matches!(**rhs, Expr::IntLiteral(_));
-                        let idx64 = if rv_c.is_some() && rhs_is_lit {
-                            let c = rv_c.unwrap();
-                            let v: i64 = if matches!(op, BinaryOp::Minus) { -(c as i64) } else { c as i64 };
-                            format!("{}", v)
+                        // Build i64 index with sign for minus
+                        // Build i64 index: dynamic (non-literal) path uses zext and optional negate for minus
+                        let idx64 = if matches!(&**rhs, Expr::IntLiteral(_)) {
+                            // Allow constant immediates to fold directly
+                            if let Some(c) = rv_c {
+                                let v: i64 = if matches!(op, BinaryOp::Minus) { -(c as i64) } else { c as i64 };
+                                format!("{}", v)
+                            } else {
+                                let z = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, rv_str);
+                                if matches!(op, BinaryOp::Minus) {
+                                    let neg = self.new_tmp();
+                                    let _ = writeln!(self.buf, "  {} = sub i64 0, {}", neg, z);
+                                    neg
+                                } else {
+                                    z
+                                }
+                            }
                         } else {
                             let z = self.new_tmp();
                             let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, rv_str);
@@ -922,21 +1439,89 @@ impl Emitter {
                                 let neg = self.new_tmp();
                                 let _ = writeln!(self.buf, "  {} = sub i64 0, {}", neg, z);
                                 neg
-                            } else { z }
+                            } else {
+                                z
+                            }
                         };
-                        let gep = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = getelementptr inbounds i32, ptr {}, i64 {}", gep, lv_str, idx64);
-                        return (gep, None);
+                        // Determine element size from pointer type
+                        let (elem_sz, is_i32_elem) = match self.type_of_expr(lhs) {
+                            Some(Type::Pointer(inner)) => {
+                                let sz = self.sizeof_t_usize(&inner) as i64;
+                                let is_i32 = matches!(*inner, Type::Int | Type::UInt);
+                                (if sz == 0 { 4 } else { sz }, is_i32)
+                            }
+                            _ => (4, true),
+                        };
+                        if is_i32_elem {
+                            // Use typed GEP for i32 elements
+                            let gep = self.new_tmp();
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds i32, ptr {}, i64 {}",
+                                gep, lv_str, idx64
+                            );
+                            return (gep, None);
+                        } else {
+                            // Byte GEP scaled by element size
+                            let scaled = if elem_sz == 1 {
+                                idx64
+                            } else {
+                                let m = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, elem_sz);
+                                m
+                            };
+                            let gep = self.new_tmp();
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                gep, lv_str, scaled
+                            );
+                            return (gep, None);
+                        }
                     } else if !lhs_is_ptr && rhs_is_ptr && matches!(op, BinaryOp::Plus) {
                         let (lv_str, lv_c) = self.emit_expr(lhs);
                         let (rv_str, _rv_c) = self.emit_expr(rhs);
-                        let idx64 = if let Some(c) = lv_c { format!("{}", c as i64) } else { let z = self.new_tmp(); let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, lv_str); z };
-                        let gep = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = getelementptr inbounds i32, ptr {}, i64 {}", gep, rv_str, idx64);
-                        return (gep, None);
+                        let idx64 = if let Some(c) = lv_c {
+                            format!("{}", c as i64)
+                        } else {
+                            let z = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, lv_str);
+                            z
+                        };
+                        let (elem_sz, is_i32_elem) = match self.type_of_expr(rhs) {
+                            Some(Type::Pointer(inner)) => {
+                                let sz = self.sizeof_t_usize(&inner) as i64;
+                                let is_i32 = matches!(*inner, Type::Int | Type::UInt);
+                                (if sz == 0 { 4 } else { sz }, is_i32)
+                            }
+                            _ => (4, true),
+                        };
+                        if is_i32_elem {
+                            let gep = self.new_tmp();
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds i32, ptr {}, i64 {}",
+                                gep, rv_str, idx64
+                            );
+                            return (gep, None);
+                        } else {
+                            let scaled = if elem_sz == 1 {
+                                idx64
+                            } else {
+                                let m = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, elem_sz);
+                                m
+                            };
+                            let gep = self.new_tmp();
+                            let _ = writeln!(
+                                self.buf,
+                                "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                gep, rv_str, scaled
+                            );
+                            return (gep, None);
+                        }
                     }
                 }
-
                 // Pointer subtraction: ptr - ptr => element difference (i32)
                 if matches!(op, BinaryOp::Minus) {
                     let lhs_is_ptr = self.expr_is_pointer(lhs);
@@ -955,7 +1540,9 @@ impl Emitter {
                             Some(Type::Pointer(inner)) => self.sizeof_t_usize(&inner) as i64,
                             _ => 4,
                         };
-                        let elems = if elem_sz == 1 { diff.clone() } else {
+                        let elems = if elem_sz == 1 {
+                            diff.clone()
+                        } else {
                             let d = self.new_tmp();
                             let _ = writeln!(self.buf, "  {} = sdiv i64 {}, {}", d, diff, elem_sz);
                             d
@@ -969,18 +1556,44 @@ impl Emitter {
                 // Unsigned-aware integer arithmetic selection
                 let lhs_uint = match &**lhs {
                     Expr::Ident(n) => {
-                        matches!(self.locals_ty.get(n), Some(Type::UChar) | Some(Type::UShort) | Some(Type::UInt) | Some(Type::ULong))
-                            || matches!(self.global_types.get(n), Some(Type::UChar) | Some(Type::UShort) | Some(Type::UInt) | Some(Type::ULong))
+                        matches!(
+                            self.locals_ty.get(n),
+                            Some(Type::UChar)
+                                | Some(Type::UShort)
+                                | Some(Type::UInt)
+                                | Some(Type::ULong)
+                        ) || matches!(
+                            self.global_types.get(n),
+                            Some(Type::UChar)
+                                | Some(Type::UShort)
+                                | Some(Type::UInt)
+                                | Some(Type::ULong)
+                        )
                     }
-                    Expr::Cast { ty, .. } => matches!(ty, Type::UChar | Type::UShort | Type::UInt | Type::ULong),
+                    Expr::Cast { ty, .. } => {
+                        matches!(ty, Type::UChar | Type::UShort | Type::UInt | Type::ULong)
+                    }
                     _ => false,
                 };
                 let rhs_uint = match &**rhs {
                     Expr::Ident(n) => {
-                        matches!(self.locals_ty.get(n), Some(Type::UChar) | Some(Type::UShort) | Some(Type::UInt) | Some(Type::ULong))
-                            || matches!(self.global_types.get(n), Some(Type::UChar) | Some(Type::UShort) | Some(Type::UInt) | Some(Type::ULong))
+                        matches!(
+                            self.locals_ty.get(n),
+                            Some(Type::UChar)
+                                | Some(Type::UShort)
+                                | Some(Type::UInt)
+                                | Some(Type::ULong)
+                        ) || matches!(
+                            self.global_types.get(n),
+                            Some(Type::UChar)
+                                | Some(Type::UShort)
+                                | Some(Type::UInt)
+                                | Some(Type::ULong)
+                        )
                     }
-                    Expr::Cast { ty, .. } => matches!(ty, Type::UChar | Type::UShort | Type::UInt | Type::ULong),
+                    Expr::Cast { ty, .. } => {
+                        matches!(ty, Type::UChar | Type::UShort | Type::UInt | Type::ULong)
+                    }
                     _ => false,
                 };
                 let unsigned = lhs_uint || rhs_uint;
@@ -1011,60 +1624,200 @@ impl Emitter {
 
                 match op {
                     // Arithmetic and bitwise (with unsigned-aware div/mod and shift handling)
-                    BinaryOp::Plus => self.bin_arith("add", lv_str, rv_str, lv_c, rv_c, |a,b| a.wrapping_add(b)),
-                    BinaryOp::Minus => self.bin_arith("sub", lv_str, rv_str, lv_c, rv_c, |a,b| a.wrapping_sub(b)),
-                    BinaryOp::Mul => self.bin_arith("mul", lv_str, rv_str, lv_c, rv_c, |a,b| a.wrapping_mul(b)),
+                    BinaryOp::Plus => {
+                        self.bin_arith("add", lv_str, rv_str, lv_c, rv_c, |a, b| a.wrapping_add(b))
+                    }
+                    BinaryOp::Minus => {
+                        self.bin_arith("sub", lv_str, rv_str, lv_c, rv_c, |a, b| a.wrapping_sub(b))
+                    }
+                    BinaryOp::Mul => {
+                        self.bin_arith("mul", lv_str, rv_str, lv_c, rv_c, |a, b| a.wrapping_mul(b))
+                    }
                     BinaryOp::Div => {
                         let op_str = if unsigned { "udiv" } else { "sdiv" };
-                        self.bin_arith(op_str, lv_str, rv_str, lv_c, rv_c, |a,b| if b!=0 { a.wrapping_div(b) } else { 0 })
+                        self.bin_arith(op_str, lv_str, rv_str, lv_c, rv_c, |a, b| {
+                            if b != 0 {
+                                a.wrapping_div(b)
+                            } else {
+                                0
+                            }
+                        })
                     }
                     BinaryOp::Mod => {
                         let op_str = if unsigned { "urem" } else { "srem" };
-                        self.bin_arith(op_str, lv_str, rv_str, lv_c, rv_c, |a,b| if b!=0 { a.wrapping_rem(b) } else { 0 })
+                        self.bin_arith(op_str, lv_str, rv_str, lv_c, rv_c, |a, b| {
+                            if b != 0 {
+                                a.wrapping_rem(b)
+                            } else {
+                                0
+                            }
+                        })
                     }
-                    BinaryOp::Shl => self.bin_arith("shl", lv_str, rv_str, lv_c, rv_c, |a,b| a.wrapping_shl((b as u32) & 31)),
+                    BinaryOp::Shl => self.bin_arith("shl", lv_str, rv_str, lv_c, rv_c, |a, b| {
+                        a.wrapping_shl((b as u32) & 31)
+                    }),
                     BinaryOp::Shr => {
                         let shr_op = if lhs_uint { "lshr" } else { "ashr" };
-                        self.bin_arith(shr_op, lv_str, rv_str, lv_c, rv_c, |a,b| (a >> ((b as u32) & 31)))
+                        self.bin_arith(shr_op, lv_str, rv_str, lv_c, rv_c, |a, b| {
+                            a >> ((b as u32) & 31)
+                        })
                     }
-                    BinaryOp::BitAnd => self.bin_arith("and", lv_str, rv_str, lv_c, rv_c, |a,b| a & b),
-                    BinaryOp::BitOr  => self.bin_arith("or",  lv_str, rv_str, lv_c, rv_c, |a,b| a | b),
-                    BinaryOp::BitXor => self.bin_arith("xor", lv_str, rv_str, lv_c, rv_c, |a,b| a ^ b),
+                    BinaryOp::BitAnd => {
+                        self.bin_arith("and", lv_str, rv_str, lv_c, rv_c, |a, b| a & b)
+                    }
+                    BinaryOp::BitOr => {
+                        self.bin_arith("or", lv_str, rv_str, lv_c, rv_c, |a, b| a | b)
+                    }
+                    BinaryOp::BitXor => {
+                        self.bin_arith("xor", lv_str, rv_str, lv_c, rv_c, |a, b| a ^ b)
+                    }
 
                     // Logical with i1 and zext to i32 (no short-circuit side effects for now)
                     BinaryOp::LAnd | BinaryOp::LOr => {
                         let (lb_str, lb_c) = self.to_bool(lv_str, lv_c);
                         let (rb_str, rb_c) = self.to_bool(rv_str, rv_c);
                         if let (Some(la), Some(rb)) = (lb_c, rb_c) {
-                            let v = match op { BinaryOp::LAnd => (la && rb) as i32, BinaryOp::LOr => (la || rb) as i32, _=>0 };
+                            let v = match op {
+                                BinaryOp::LAnd => (la && rb) as i32,
+                                BinaryOp::LOr => (la || rb) as i32,
+                                _ => 0,
+                            };
                             (format!("{}", v), Some(v))
                         } else {
                             let tmpb = self.new_tmp();
                             match (lb_c, rb_c) {
-                                (Some(la), None) => { let _ = writeln!(self.buf, "  {} = {} i1 {}, {}", tmpb, if matches!(op, BinaryOp::LAnd){"and"} else {"or"}, if la {"true"} else {"false"}, rb_str); },
-                                (None, Some(rbv)) => { let _ = writeln!(self.buf, "  {} = {} i1 {}, {}", tmpb, if matches!(op, BinaryOp::LAnd){"and"} else {"or"}, lb_str, if rbv {"true"} else {"false"}); },
-                                (None, None) => { let _ = writeln!(self.buf, "  {} = {} i1 {}, {}", tmpb, if matches!(op, BinaryOp::LAnd){"and"} else {"or"}, lb_str, rb_str); },
+                                (Some(la), None) => {
+                                    let _ = writeln!(
+                                        self.buf,
+                                        "  {} = {} i1 {}, {}",
+                                        tmpb,
+                                        if matches!(op, BinaryOp::LAnd) {
+                                            "and"
+                                        } else {
+                                            "or"
+                                        },
+                                        if la { "true" } else { "false" },
+                                        rb_str
+                                    );
+                                }
+                                (None, Some(rbv)) => {
+                                    let _ = writeln!(
+                                        self.buf,
+                                        "  {} = {} i1 {}, {}",
+                                        tmpb,
+                                        if matches!(op, BinaryOp::LAnd) {
+                                            "and"
+                                        } else {
+                                            "or"
+                                        },
+                                        lb_str,
+                                        if rbv { "true" } else { "false" }
+                                    );
+                                }
+                                (None, None) => {
+                                    let _ = writeln!(
+                                        self.buf,
+                                        "  {} = {} i1 {}, {}",
+                                        tmpb,
+                                        if matches!(op, BinaryOp::LAnd) {
+                                            "and"
+                                        } else {
+                                            "or"
+                                        },
+                                        lb_str,
+                                        rb_str
+                                    );
+                                }
                                 (Some(_), Some(_)) => unreachable!(),
                             }
                             let z = self.new_tmp();
                             let _ = writeln!(self.buf, "  {} = zext i1 {} to i32", z, tmpb);
                             (z, None)
                         }
-                    },
+                    }
 
                     // Comparisons -> icmp + zext to i32 (unsigned predicates if either operand unsigned)
-                    BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Eq | BinaryOp::Ne => {
+                    BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::Eq
+                    | BinaryOp::Ne => {
+                        // Pointer-aware comparisons: if either operand is a pointer, compare as ptr
+                        let l_is_ptr = self.expr_is_pointer(lhs);
+                        let r_is_ptr = self.expr_is_pointer(rhs);
+                        if l_is_ptr || r_is_ptr {
+                            // We already have lv_str/rv_str as the evaluated values; convert ints to ptr if needed
+                            let lp = if l_is_ptr {
+                                lv_str.clone()
+                            } else {
+                                let t = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = inttoptr i32 {} to ptr", t, lv_str);
+                                t
+                            };
+                            let rp = if r_is_ptr {
+                                rv_str.clone()
+                            } else {
+                                let t = self.new_tmp();
+                                let _ = writeln!(self.buf, "  {} = inttoptr i32 {} to ptr", t, rv_str);
+                                t
+                            };
+                            // Use unsigned predicates for ordering; eq/ne are fine
+                            let pred = match op {
+                                BinaryOp::Lt => "ult",
+                                BinaryOp::Le => "ule",
+                                BinaryOp::Gt => "ugt",
+                                BinaryOp::Ge => "uge",
+                                BinaryOp::Eq => "eq",
+                                BinaryOp::Ne => "ne",
+                                _ => unreachable!(),
+                            };
+                            let ctmp = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = icmp {} ptr {}, {}", ctmp, pred, lp, rp);
+                            let z = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = zext i1 {} to i32", z, ctmp);
+                            return (z, None);
+                        }
+
                         let pred = match op {
-                            BinaryOp::Lt => if unsigned { "ult" } else { "slt" },
-                            BinaryOp::Le => if unsigned { "ule" } else { "sle" },
-                            BinaryOp::Gt => if unsigned { "ugt" } else { "sgt" },
-                            BinaryOp::Ge => if unsigned { "uge" } else { "sge" },
+                            BinaryOp::Lt => {
+                                if unsigned {
+                                    "ult"
+                                } else {
+                                    "slt"
+                                }
+                            }
+                            BinaryOp::Le => {
+                                if unsigned {
+                                    "ule"
+                                } else {
+                                    "sle"
+                                }
+                            }
+                            BinaryOp::Gt => {
+                                if unsigned {
+                                    "ugt"
+                                } else {
+                                    "sgt"
+                                }
+                            }
+                            BinaryOp::Ge => {
+                                if unsigned {
+                                    "uge"
+                                } else {
+                                    "sge"
+                                }
+                            }
                             BinaryOp::Eq => "eq",
                             BinaryOp::Ne => "ne",
                             _ => unreachable!(),
                         };
                         let ctmp = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = icmp {} i32 {}, {}", ctmp, pred, lv_str, rv_str);
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = icmp {} i32 {}, {}",
+                            ctmp, pred, lv_str, rv_str
+                        );
                         let z = self.new_tmp();
                         let _ = writeln!(self.buf, "  {} = zext i1 {} to i32", z, ctmp);
                         (z, None)
@@ -1082,7 +1835,7 @@ impl Emitter {
                     }
                     _ => (eptr, None),
                 }
-            },
+            }
             // Casts: handle int<->ptr and ptr->ptr (fallback for other types)
             Expr::Cast { ty, expr } => {
                 let (vstr, vc) = self.emit_expr(expr);
@@ -1115,7 +1868,7 @@ impl Emitter {
                         (vstr, vc)
                     }
                 }
-            },
+            }
             // Function calls: puts (special), printf (varargs), generic
             Expr::Call { callee, args } => {
                 if callee == "puts" && args.len() == 1 {
@@ -1141,7 +1894,12 @@ impl Emitter {
                     let tmp = self.new_tmp();
                     let _ = write!(self.buf, "  {} = call i32 @{}(", tmp, callee);
                     for (i, a) in arg_strs.iter().enumerate() {
-                        let _ = write!(self.buf, "{}{}", a, if i + 1 < arg_strs.len() { ", " } else { "" });
+                        let _ = write!(
+                            self.buf,
+                            "{}{}",
+                            a,
+                            if i + 1 < arg_strs.len() { ", " } else { "" }
+                        );
                     }
                     let _ = writeln!(self.buf, ")");
                     (tmp, None)
@@ -1164,7 +1922,11 @@ impl Emitter {
                                     } else {
                                         // Fallback: int -> ptr for non-string first arg
                                         let t = self.new_tmp();
-                                        let _ = writeln!(self.buf, "  {} = inttoptr i32 {} to ptr", t, v);
+                                        let _ = writeln!(
+                                            self.buf,
+                                            "  {} = inttoptr i32 {} to ptr",
+                                            t, v
+                                        );
                                         parts.push(format!("ptr {}", t));
                                     }
                                 }
@@ -1183,19 +1945,29 @@ impl Emitter {
                     let tmp = self.new_tmp();
                     let _ = write!(self.buf, "  {} = call i32 @printf(", tmp);
                     for (i, p) in parts.iter().enumerate() {
-                        let _ = write!(self.buf, "{}{}", p, if i + 1 < parts.len() { ", " } else { "" });
+                        let _ = write!(
+                            self.buf,
+                            "{}{}",
+                            p,
+                            if i + 1 < parts.len() { ", " } else { "" }
+                        );
                     }
                     let _ = writeln!(self.buf, ")");
                     (tmp, None)
                 } else {
                     let mut arg_vals: Vec<String> = Vec::new();
-                    for a in args { let (s, _c) = self.emit_expr(a); arg_vals.push(s); }
+                    for a in args {
+                        let (s, _c) = self.emit_expr(a);
+                        arg_vals.push(s);
+                    }
                     // Ensure external declaration for callee only if not already defined in this module
                     let already_defined = self.buf.contains(&format!("define i32 @{}(", callee));
                     if !already_defined {
                         let mut decl = format!("declare i32 @{}(", callee);
                         for i in 0..arg_vals.len() {
-                            if i > 0 { decl.push_str(", "); }
+                            if i > 0 {
+                                decl.push_str(", ");
+                            }
                             decl.push_str("i32");
                         }
                         decl.push(')');
@@ -1203,11 +1975,18 @@ impl Emitter {
                     }
                     let tmp = self.new_tmp();
                     let _ = write!(self.buf, "  {} = call i32 @{}(", tmp, callee);
-                    for (i, av) in arg_vals.iter().enumerate() { let _ = write!(self.buf, "i32 {}{}", av, if i + 1 < arg_vals.len() {", "} else {""}); }
+                    for (i, av) in arg_vals.iter().enumerate() {
+                        let _ = write!(
+                            self.buf,
+                            "i32 {}{}",
+                            av,
+                            if i + 1 < arg_vals.len() { ", " } else { "" }
+                        );
+                    }
                     let _ = writeln!(self.buf, ")");
                     (tmp, None)
                 }
-            },
+            }
             // Indirect call via function pointer
             Expr::CallPtr { target, args } => {
                 let (tstr, _tc) = self.emit_expr(target);
@@ -1225,13 +2004,22 @@ impl Emitter {
                 let tmp = self.new_tmp();
                 let _ = write!(self.buf, "  {} = call i32 {}(", tmp, tstr);
                 for (i, p) in parts.iter().enumerate() {
-                    let _ = write!(self.buf, "{}{}", p, if i + 1 < parts.len() { ", " } else { "" });
+                    let _ = write!(
+                        self.buf,
+                        "{}{}",
+                        p,
+                        if i + 1 < parts.len() { ", " } else { "" }
+                    );
                 }
                 let _ = writeln!(self.buf, ")");
                 (tmp, None)
-            },
+            }
             // Ternary/conditional expression: cond ? then_e : else_e (emit control-flow with join)
-            Expr::Cond { cond, then_e, else_e } => {
+            Expr::Cond {
+                cond,
+                then_e,
+                else_e,
+            } => {
                 // Evaluate condition to i1
                 let (cv_str, cv_c) = self.emit_expr(cond);
                 let (c_i1, _c_b) = self.to_bool(cv_str, cv_c);
@@ -1259,7 +2047,9 @@ impl Emitter {
                 self.start_block(&then_lbl);
                 let (tv_str, _tc) = self.emit_expr(then_e);
                 if res_is_ptr {
-                    let tval = if t_is_ptr { tv_str.clone() } else {
+                    let tval = if t_is_ptr {
+                        tv_str.clone()
+                    } else {
                         let t = self.new_tmp();
                         let _ = writeln!(self.buf, "  {} = inttoptr i32 {} to ptr", t, tv_str);
                         t
@@ -1270,7 +2060,9 @@ impl Emitter {
                         let t = self.new_tmp();
                         let _ = writeln!(self.buf, "  {} = ptrtoint ptr {} to i32", t, tv_str);
                         t
-                    } else { tv_str.clone() };
+                    } else {
+                        tv_str.clone()
+                    };
                     let _ = writeln!(self.buf, "  store i32 {}, ptr {}", tval, res_slot);
                 }
                 self.br_uncond(&join_lbl);
@@ -1279,7 +2071,9 @@ impl Emitter {
                 self.start_block(&else_lbl);
                 let (ev_str, _ec) = self.emit_expr(else_e);
                 if res_is_ptr {
-                    let evalv = if e_is_ptr { ev_str.clone() } else {
+                    let evalv = if e_is_ptr {
+                        ev_str.clone()
+                    } else {
                         let t = self.new_tmp();
                         let _ = writeln!(self.buf, "  {} = inttoptr i32 {} to ptr", t, ev_str);
                         t
@@ -1290,7 +2084,9 @@ impl Emitter {
                         let t = self.new_tmp();
                         let _ = writeln!(self.buf, "  {} = ptrtoint ptr {} to i32", t, ev_str);
                         t
-                    } else { ev_str.clone() };
+                    } else {
+                        ev_str.clone()
+                    };
                     let _ = writeln!(self.buf, "  store i32 {}, ptr {}", evalv, res_slot);
                 }
                 self.br_uncond(&join_lbl);
@@ -1306,105 +2102,233 @@ impl Emitter {
                     let _ = writeln!(self.buf, "  {} = load i32, ptr {}", res, res_slot);
                     (res, None)
                 }
+            }
+            Expr::IncDec { pre, inc, target } => match &**target {
+                Expr::Ident(name) => {
+                    let ptr = if let Some(p) = self.locals.get(name) {
+                        p.clone()
+                    } else {
+                        let p = format!("%{}.addr", name);
+                        let _ = writeln!(self.buf, "  {} = alloca i32", p);
+                        self.locals.insert(name.clone(), p.clone());
+                        self.locals_ty.insert(name.clone(), Type::Int);
+                        p
+                    };
+                    let old = self.new_tmp();
+                    let _ = writeln!(self.buf, "  {} = load i32, ptr {}", old, ptr);
+                    let (newv, _c) = if *inc {
+                        self.bin_arith(
+                            "add",
+                            old.clone(),
+                            "1".to_string(),
+                            None,
+                            Some(1),
+                            |a, b| a.wrapping_add(b),
+                        )
+                    } else {
+                        self.bin_arith(
+                            "sub",
+                            old.clone(),
+                            "1".to_string(),
+                            None,
+                            Some(1),
+                            |a, b| a.wrapping_sub(b),
+                        )
+                    };
+                    let _ = writeln!(self.buf, "  store i32 {}, ptr {}", newv, ptr);
+                    self.consts.remove(name);
+                    if *pre {
+                        (newv, None)
+                    } else {
+                        (old, None)
+                    }
+                }
+                Expr::Unary {
+                    op: UnaryOp::Deref,
+                    expr: pexpr,
+                } => {
+                    let (pstr, _pc) = self.emit_expr(pexpr);
+                    let old = self.new_tmp();
+                    let _ = writeln!(self.buf, "  {} = load i32, ptr {}", old, pstr);
+                    let (newv, _c) = if *inc {
+                        self.bin_arith(
+                            "add",
+                            old.clone(),
+                            "1".to_string(),
+                            None,
+                            Some(1),
+                            |a, b| a.wrapping_add(b),
+                        )
+                    } else {
+                        self.bin_arith(
+                            "sub",
+                            old.clone(),
+                            "1".to_string(),
+                            None,
+                            Some(1),
+                            |a, b| a.wrapping_sub(b),
+                        )
+                    };
+                    let _ = writeln!(self.buf, "  store i32 {}, ptr {}", newv, pstr);
+                    self.consts.clear();
+                    if *pre {
+                        (newv, None)
+                    } else {
+                        (old, None)
+                    }
+                }
+                _ => {
+                    let (v, _c) = self.emit_expr(target);
+                    (v, None)
+                }
             },
-            Expr::IncDec { pre, inc, target } => {
-                match &**target {
-                    Expr::Ident(name) => {
-                        let ptr = if let Some(p) = self.locals.get(name) { p.clone() } else {
-                            let p = format!("%{}.addr", name);
-                            let _ = writeln!(self.buf, "  {} = alloca i32", p);
-                            self.locals.insert(name.clone(), p.clone());
-                            self.locals_ty.insert(name.clone(), Type::Int);
-                            p
-                        };
-                        let old = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = load i32, ptr {}", old, ptr);
-                        let (newv, _c) = if *inc {
-                            self.bin_arith("add", old.clone(), "1".to_string(), None, Some(1), |a,b| a.wrapping_add(b))
-                        } else {
-                            self.bin_arith("sub", old.clone(), "1".to_string(), None, Some(1), |a,b| a.wrapping_sub(b))
-                        };
-                        let _ = writeln!(self.buf, "  store i32 {}, ptr {}", newv, ptr);
-                        self.consts.remove(name);
-                        if *pre { (newv, None) } else { (old, None) }
-                    }
-                    Expr::Unary { op: UnaryOp::Deref, expr: pexpr } => {
-                        let (pstr, _pc) = self.emit_expr(pexpr);
-                        let old = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = load i32, ptr {}", old, pstr);
-                        let (newv, _c) = if *inc {
-                            self.bin_arith("add", old.clone(), "1".to_string(), None, Some(1), |a,b| a.wrapping_add(b))
-                        } else {
-                            self.bin_arith("sub", old.clone(), "1".to_string(), None, Some(1), |a,b| a.wrapping_sub(b))
-                        };
-                        let _ = writeln!(self.buf, "  store i32 {}, ptr {}", newv, pstr);
-                        self.consts.clear();
-                        if *pre { (newv, None) } else { (old, None) }
-                    }
-                    _ => {
-                        let (v, _c) = self.emit_expr(target);
-                        (v, None)
-                    }
-                }
-            }
             // Compound assignment: lhs op= rhs
-            Expr::AssignOp { op, lhs, rhs } => {
-                match &**lhs {
-                    Expr::Ident(name) => {
-                        let ptr = if let Some(p) = self.locals.get(name) { p.clone() } else {
-                            let p = format!("%{}.addr", name);
-                            let _ = writeln!(self.buf, "  {} = alloca i32", p);
-                            self.locals.insert(name.clone(), p.clone());
-                            self.locals_ty.insert(name.clone(), Type::Int);
-                            p
-                        };
-                        let ltmp = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = load i32, ptr {}", ltmp, ptr);
-                        let (rv_str, rv_c) = self.emit_expr(rhs);
-                        let (res_str, res_c) = match op {
-                            BinaryOp::Plus => self.bin_arith("add", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_add(b)),
-                            BinaryOp::Minus => self.bin_arith("sub", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_sub(b)),
-                            BinaryOp::Mul => self.bin_arith("mul", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_mul(b)),
-                            BinaryOp::Div => self.bin_arith("sdiv", ltmp.clone(), rv_str, None, rv_c, |a,b| if b!=0 { a.wrapping_div(b) } else { 0 }),
-                            BinaryOp::Mod => self.bin_arith("srem", ltmp.clone(), rv_str, None, rv_c, |a,b| if b!=0 { a.wrapping_rem(b) } else { 0 }),
-                            BinaryOp::Shl => self.bin_arith("shl", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_shl((b as u32) & 31)),
-                            BinaryOp::Shr => self.bin_arith("ashr", ltmp.clone(), rv_str, None, rv_c, |a,b| (a >> ((b as u32) & 31))),
-                            BinaryOp::BitAnd => self.bin_arith("and", ltmp.clone(), rv_str, None, rv_c, |a,b| a & b),
-                            BinaryOp::BitOr  => self.bin_arith("or",  ltmp.clone(), rv_str, None, rv_c, |a,b| a | b),
-                            BinaryOp::BitXor => self.bin_arith("xor", ltmp.clone(), rv_str, None, rv_c, |a,b| a ^ b),
-                            _ => (ltmp.clone(), None),
-                        };
-                        let _ = writeln!(self.buf, "  store i32 {}, ptr {}", res_str, ptr);
-                        if let Some(c) = res_c { self.consts.insert(name.clone(), c); } else { self.consts.remove(name); }
-                        (res_str, res_c)
+            Expr::AssignOp { op, lhs, rhs } => match &**lhs {
+                Expr::Ident(name) => {
+                    let ptr = if let Some(p) = self.locals.get(name) {
+                        p.clone()
+                    } else {
+                        let p = format!("%{}.addr", name);
+                        let _ = writeln!(self.buf, "  {} = alloca i32", p);
+                        self.locals.insert(name.clone(), p.clone());
+                        self.locals_ty.insert(name.clone(), Type::Int);
+                        p
+                    };
+                    let ltmp = self.new_tmp();
+                    let _ = writeln!(self.buf, "  {} = load i32, ptr {}", ltmp, ptr);
+                    let (rv_str, rv_c) = self.emit_expr(rhs);
+                    let (res_str, res_c) = match op {
+                        BinaryOp::Plus => {
+                            self.bin_arith("add", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_add(b)
+                            })
+                        }
+                        BinaryOp::Minus => {
+                            self.bin_arith("sub", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_sub(b)
+                            })
+                        }
+                        BinaryOp::Mul => {
+                            self.bin_arith("mul", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_mul(b)
+                            })
+                        }
+                        BinaryOp::Div => {
+                            self.bin_arith("sdiv", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                if b != 0 {
+                                    a.wrapping_div(b)
+                                } else {
+                                    0
+                                }
+                            })
+                        }
+                        BinaryOp::Mod => {
+                            self.bin_arith("srem", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                if b != 0 {
+                                    a.wrapping_rem(b)
+                                } else {
+                                    0
+                                }
+                            })
+                        }
+                        BinaryOp::Shl => {
+                            self.bin_arith("shl", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_shl((b as u32) & 31)
+                            })
+                        }
+                        BinaryOp::Shr => {
+                            self.bin_arith("ashr", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                (a >> ((b as u32) & 31))
+                            })
+                        }
+                        BinaryOp::BitAnd => {
+                            self.bin_arith("and", ltmp.clone(), rv_str, None, rv_c, |a, b| a & b)
+                        }
+                        BinaryOp::BitOr => {
+                            self.bin_arith("or", ltmp.clone(), rv_str, None, rv_c, |a, b| a | b)
+                        }
+                        BinaryOp::BitXor => {
+                            self.bin_arith("xor", ltmp.clone(), rv_str, None, rv_c, |a, b| a ^ b)
+                        }
+                        _ => (ltmp.clone(), None),
+                    };
+                    let _ = writeln!(self.buf, "  store i32 {}, ptr {}", res_str, ptr);
+                    if let Some(c) = res_c {
+                        self.consts.insert(name.clone(), c);
+                    } else {
+                        self.consts.remove(name);
                     }
-                    Expr::Unary { op: UnaryOp::Deref, expr: pexpr } => {
-                        let (pstr, _pc) = self.emit_expr(pexpr);
-                        let ltmp = self.new_tmp();
-                        let _ = writeln!(self.buf, "  {} = load i32, ptr {}", ltmp, pstr);
-                        let (rv_str, rv_c) = self.emit_expr(rhs);
-                        let (res_str, _res_c) = match op {
-                            BinaryOp::Plus => self.bin_arith("add", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_add(b)),
-                            BinaryOp::Minus => self.bin_arith("sub", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_sub(b)),
-                            BinaryOp::Mul => self.bin_arith("mul", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_mul(b)),
-                            BinaryOp::Div => self.bin_arith("sdiv", ltmp.clone(), rv_str, None, rv_c, |a,b| if b!=0 { a.wrapping_div(b) } else { 0 }),
-                            BinaryOp::Mod => self.bin_arith("srem", ltmp.clone(), rv_str, None, rv_c, |a,b| if b!=0 { a.wrapping_rem(b) } else { 0 }),
-                            BinaryOp::Shl => self.bin_arith("shl", ltmp.clone(), rv_str, None, rv_c, |a,b| a.wrapping_shl((b as u32) & 31)),
-                            BinaryOp::Shr => self.bin_arith("ashr", ltmp.clone(), rv_str, None, rv_c, |a,b| (a >> ((b as u32) & 31))),
-                            BinaryOp::BitAnd => self.bin_arith("and", ltmp.clone(), rv_str, None, rv_c, |a,b| a & b),
-                            BinaryOp::BitOr  => self.bin_arith("or",  ltmp.clone(), rv_str, None, rv_c, |a,b| a | b),
-                            BinaryOp::BitXor => self.bin_arith("xor", ltmp.clone(), rv_str, None, rv_c, |a,b| a ^ b),
-                            _ => (ltmp.clone(), None),
-                        };
-                        let _ = writeln!(self.buf, "  store i32 {}, ptr {}", res_str, pstr);
-                        self.consts.clear();
-                        (res_str, None)
-                    }
-                    _ => {
-                        self.emit_expr(rhs)
-                    }
+                    (res_str, res_c)
                 }
-            }
+                Expr::Unary {
+                    op: UnaryOp::Deref,
+                    expr: pexpr,
+                } => {
+                    let (pstr, _pc) = self.emit_expr(pexpr);
+                    let ltmp = self.new_tmp();
+                    let _ = writeln!(self.buf, "  {} = load i32, ptr {}", ltmp, pstr);
+                    let (rv_str, rv_c) = self.emit_expr(rhs);
+                    let (res_str, _res_c) = match op {
+                        BinaryOp::Plus => {
+                            self.bin_arith("add", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_add(b)
+                            })
+                        }
+                        BinaryOp::Minus => {
+                            self.bin_arith("sub", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_sub(b)
+                            })
+                        }
+                        BinaryOp::Mul => {
+                            self.bin_arith("mul", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_mul(b)
+                            })
+                        }
+                        BinaryOp::Div => {
+                            self.bin_arith("sdiv", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                if b != 0 {
+                                    a.wrapping_div(b)
+                                } else {
+                                    0
+                                }
+                            })
+                        }
+                        BinaryOp::Mod => {
+                            self.bin_arith("srem", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                if b != 0 {
+                                    a.wrapping_rem(b)
+                                } else {
+                                    0
+                                }
+                            })
+                        }
+                        BinaryOp::Shl => {
+                            self.bin_arith("shl", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                a.wrapping_shl((b as u32) & 31)
+                            })
+                        }
+                        BinaryOp::Shr => {
+                            self.bin_arith("ashr", ltmp.clone(), rv_str, None, rv_c, |a, b| {
+                                (a >> ((b as u32) & 31))
+                            })
+                        }
+                        BinaryOp::BitAnd => {
+                            self.bin_arith("and", ltmp.clone(), rv_str, None, rv_c, |a, b| a & b)
+                        }
+                        BinaryOp::BitOr => {
+                            self.bin_arith("or", ltmp.clone(), rv_str, None, rv_c, |a, b| a | b)
+                        }
+                        BinaryOp::BitXor => {
+                            self.bin_arith("xor", ltmp.clone(), rv_str, None, rv_c, |a, b| a ^ b)
+                        }
+                        _ => (ltmp.clone(), None),
+                    };
+                    let _ = writeln!(self.buf, "  store i32 {}, ptr {}", res_str, pstr);
+                    self.consts.clear();
+                    (res_str, None)
+                }
+                _ => self.emit_expr(rhs),
+            },
             // Sized queries
             Expr::SizeofType(ty) => {
                 let sz = self.sizeof_t(ty);
@@ -1413,24 +2337,33 @@ impl Emitter {
             Expr::SizeofExpr(expr) => {
                 let sz = match &**expr {
                     // sizeof on an identifier should use its declared type without array-to-pointer decay
-                    Expr::Ident(name) => {
-                        match self.locals_ty.get(name) {
-                            Some(ty) => self.sizeof_t(ty),
-                            None => 4,
-                        }
-                    }
+                    Expr::Ident(name) => match self.locals_ty.get(name) {
+                        Some(ty) => self.sizeof_t(ty),
+                        None => 4,
+                    },
                     // sizeof string literal = length including NUL terminator
                     Expr::StringLiteral(repr) => decode_c_string(repr).len() as i32,
                     // sizeof(&expr) => pointer size
-                    Expr::Unary { op: UnaryOp::AddrOf, .. } => 8,
+                    Expr::Unary {
+                        op: UnaryOp::AddrOf,
+                        ..
+                    } => 8,
                     // sizeof(*expr) => sizeof(int) for our supported pointee
-                    Expr::Unary { op: UnaryOp::Deref, .. } => 4,
+                    Expr::Unary {
+                        op: UnaryOp::Deref, ..
+                    } => 4,
                     // sizeof on a cast expression uses the target type
                     Expr::Cast { ty, .. } => self.sizeof_t(ty),
                     // sizeof on an indexing expression yields element size (int)
                     Expr::Index { .. } => 4,
                     // Fallback: use pointer heuristic vs int
-                    _ => { if self.expr_is_pointer(&**expr) { 8 } else { 4 } }
+                    _ => {
+                        if self.expr_is_pointer(&**expr) {
+                            8
+                        } else {
+                            4
+                        }
+                    }
                 };
                 (format!("{}", sz), Some(sz))
             }
@@ -1443,7 +2376,9 @@ impl Emitter {
             // Simple assignment to lvalue (identifier already handled above)
             Expr::Assign { name, value } => {
                 let (vstr, vc) = self.emit_expr(value);
-                let ptr = if let Some(p) = self.locals.get(name) { p.clone() } else {
+                let ptr = if let Some(p) = self.locals.get(name) {
+                    p.clone()
+                } else {
                     let p = format!("%{}.addr", name);
                     let _ = writeln!(self.buf, "  {} = alloca i32", p);
                     self.locals.insert(name.clone(), p.clone());
@@ -1457,7 +2392,11 @@ impl Emitter {
                     }
                     _ => {
                         let _ = writeln!(self.buf, "  store i32 {}, ptr {}", vstr, ptr);
-                        if let Some(c) = vc { self.consts.insert(name.clone(), c); } else { self.consts.remove(name); }
+                        if let Some(c) = vc {
+                            self.consts.insert(name.clone(), c);
+                        } else {
+                            self.consts.remove(name);
+                        }
                     }
                 }
                 (vstr, vc)
@@ -1469,10 +2408,20 @@ impl Emitter {
                 let _ = writeln!(self.buf, "  store i32 {}, ptr {}", vstr, pstr);
                 self.consts.clear();
                 (vstr, None)
-            }
+            },
+            // Initializer lists are not evaluatable as rvalues here; treat as zero
+            Expr::InitList(_items) => ("0".to_string(), Some(0)),
         }
     }
-    fn bin_arith<F: Fn(i32,i32)->i32>(&mut self, op: &str, l: String, r: String, _lc: Option<i32>, _rc: Option<i32>, _f: F) -> (String, Option<i32>) {
+    fn bin_arith<F: Fn(i32, i32) -> i32>(
+        &mut self,
+        op: &str,
+        l: String,
+        r: String,
+        _lc: Option<i32>,
+        _rc: Option<i32>,
+        _f: F,
+    ) -> (String, Option<i32>) {
         // Do not constant-fold here; tests rely on presence of specific ops (ashr/sdiv/srem)
         let tmp = self.new_tmp();
         let _ = writeln!(self.buf, "  {} = {} i32 {}, {}", tmp, op, l, r);
@@ -1488,37 +2437,74 @@ impl Emitter {
         }
         match s {
             Stmt::Block(stmts) => {
-                if self.terminated { return; }
-                for st in stmts { self.emit_stmt(st, ret_ty); if self.terminated { break; } }
+                if self.terminated {
+                    return;
+                }
+                for st in stmts {
+                    self.emit_stmt(st, ret_ty);
+                    if self.terminated {
+                        break;
+                    }
+                }
             }
-            Stmt::If { cond, then_branch, else_branch } => {
-                if self.terminated { return; }
+            Stmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                if self.terminated {
+                    return;
+                }
                 let (cv_str, cv_c) = self.emit_expr(cond);
                 let (c_i1, _c_b) = self.to_bool(cv_str, cv_c);
                 let then_lbl = self.new_label();
                 let cont_lbl = self.new_label();
-                let else_lbl = if else_branch.is_some() { Some(self.new_label()) } else { None };
-                if let Some(el) = &else_lbl { self.br_cond(&c_i1, &then_lbl, el); } else { self.br_cond(&c_i1, &then_lbl, &cont_lbl); }
+                let else_lbl = if else_branch.is_some() {
+                    Some(self.new_label())
+                } else {
+                    None
+                };
+                if let Some(el) = &else_lbl {
+                    self.br_cond(&c_i1, &then_lbl, el);
+                } else {
+                    self.br_cond(&c_i1, &then_lbl, &cont_lbl);
+                }
                 // then
                 self.start_block(&then_lbl);
-                for st in then_branch { self.emit_stmt(st, ret_ty); if self.terminated { break; } }
-                if !self.terminated { self.br_uncond(&cont_lbl); }
+                for st in then_branch {
+                    self.emit_stmt(st, ret_ty);
+                    if self.terminated {
+                        break;
+                    }
+                }
+                if !self.terminated {
+                    self.br_uncond(&cont_lbl);
+                }
                 // else
                 if let Some(el) = else_lbl {
                     self.start_block(&el);
                     if let Some(eb) = else_branch {
-                        for st in eb { self.emit_stmt(st, ret_ty); if self.terminated { break; } }
+                        for st in eb {
+                            self.emit_stmt(st, ret_ty);
+                            if self.terminated {
+                                break;
+                            }
+                        }
                     }
-                    if !self.terminated { self.br_uncond(&cont_lbl); }
+                    if !self.terminated {
+                        self.br_uncond(&cont_lbl);
+                    }
                 }
                 // cont
                 self.start_block(&cont_lbl);
             }
             Stmt::While { cond, body } => {
-                if self.terminated { return; }
+                if self.terminated {
+                    return;
+                }
                 let cond_lbl = self.new_label();
                 let body_lbl = self.new_label();
-                let end_lbl  = self.new_label();
+                let end_lbl = self.new_label();
                 self.loop_stack.push((end_lbl.clone(), cond_lbl.clone()));
                 self.in_loop += 1;
                 self.br_uncond(&cond_lbl);
@@ -1527,36 +2513,63 @@ impl Emitter {
                 let (c_i1, _c_b) = self.to_bool(cv_str, cv_c);
                 self.br_cond(&c_i1, &body_lbl, &end_lbl);
                 self.start_block(&body_lbl);
-                for st in body { self.emit_stmt(st, ret_ty); if self.terminated { break; } }
-                if !self.terminated { self.br_uncond(&cond_lbl); }
-                self.in_loop -= 1; let _ = self.loop_stack.pop();
+                for st in body {
+                    self.emit_stmt(st, ret_ty);
+                    if self.terminated {
+                        break;
+                    }
+                }
+                if !self.terminated {
+                    self.br_uncond(&cond_lbl);
+                }
+                self.in_loop -= 1;
+                let _ = self.loop_stack.pop();
                 self.start_block(&end_lbl);
             }
             Stmt::DoWhile { body, cond } => {
-                if self.terminated { return; }
+                if self.terminated {
+                    return;
+                }
                 let body_lbl = self.new_label();
                 let cond_lbl = self.new_label();
-                let end_lbl  = self.new_label();
+                let end_lbl = self.new_label();
                 self.loop_stack.push((end_lbl.clone(), cond_lbl.clone()));
                 self.in_loop += 1;
                 self.br_uncond(&body_lbl);
                 self.start_block(&body_lbl);
-                for st in body { self.emit_stmt(st, ret_ty); if self.terminated { break; } }
-                if !self.terminated { self.br_uncond(&cond_lbl); }
+                for st in body {
+                    self.emit_stmt(st, ret_ty);
+                    if self.terminated {
+                        break;
+                    }
+                }
+                if !self.terminated {
+                    self.br_uncond(&cond_lbl);
+                }
                 self.start_block(&cond_lbl);
                 let (cv_str, cv_c) = self.emit_expr(cond);
                 let (c_i1, _c_b) = self.to_bool(cv_str, cv_c);
                 self.br_cond(&c_i1, &body_lbl, &end_lbl);
-                self.in_loop -= 1; let _ = self.loop_stack.pop();
+                self.in_loop -= 1;
+                let _ = self.loop_stack.pop();
                 self.start_block(&end_lbl);
             }
-            Stmt::For { init, cond, post, body } => {
-                if self.terminated { return; }
-                if let Some(e) = init { let _ = self.emit_expr(e); }
+            Stmt::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                if self.terminated {
+                    return;
+                }
+                if let Some(e) = init {
+                    let _ = self.emit_expr(e);
+                }
                 let cond_lbl = self.new_label();
                 let body_lbl = self.new_label();
                 let post_lbl = self.new_label();
-                let end_lbl  = self.new_label();
+                let end_lbl = self.new_label();
                 self.loop_stack.push((end_lbl.clone(), post_lbl.clone()));
                 self.in_loop += 1;
                 self.br_uncond(&cond_lbl);
@@ -1569,15 +2582,26 @@ impl Emitter {
                     self.br_uncond(&body_lbl);
                 }
                 self.start_block(&body_lbl);
-                for st in body { self.emit_stmt(st, ret_ty); if self.terminated { break; } }
-                if !self.terminated { self.br_uncond(&post_lbl); }
+                for st in body {
+                    self.emit_stmt(st, ret_ty);
+                    if self.terminated {
+                        break;
+                    }
+                }
+                if !self.terminated {
+                    self.br_uncond(&post_lbl);
+                }
                 self.start_block(&post_lbl);
-                if let Some(p) = post { let _ = self.emit_expr(p); }
+                if let Some(p) = post {
+                    let _ = self.emit_expr(p);
+                }
                 self.br_uncond(&cond_lbl);
                 self.start_block(&end_lbl);
             }
             Stmt::Switch { cond, body } => {
-                if self.terminated { return; }
+                if self.terminated {
+                    return;
+                }
                 let (cstr, _cc) = self.emit_expr(cond);
                 let end_lbl = self.new_label();
                 let dispatch_lbl = self.new_label();
@@ -1585,9 +2609,19 @@ impl Emitter {
                 let mut labels: Vec<(String, Option<&Expr>)> = Vec::new();
                 let mut label_indices: Vec<usize> = Vec::new();
                 for (i, s2) in body.iter().enumerate() {
-                    match s2 { Stmt::Case { value } => { let l = self.new_label(); labels.push((l, Some(value))); label_indices.push(i); }
-                               Stmt::Default => { let l = self.new_label(); labels.push((l, None)); label_indices.push(i); }
-                               _ => {} }
+                    match s2 {
+                        Stmt::Case { value } => {
+                            let l = self.new_label();
+                            labels.push((l, Some(value)));
+                            label_indices.push(i);
+                        }
+                        Stmt::Default => {
+                            let l = self.new_label();
+                            labels.push((l, None));
+                            label_indices.push(i);
+                        }
+                        _ => {}
+                    }
                 }
                 self.br_uncond(&dispatch_lbl);
                 let mut block_starts: HashMap<usize, String> = HashMap::new();
@@ -1601,12 +2635,20 @@ impl Emitter {
                         self.start_block(&lbl);
                         i += 1;
                         while i < body.len() {
-                            if block_starts.contains_key(&i) { break; }
-                            if let Stmt::Break = body[i] { self.br_uncond(&end_lbl); i += 1; break; }
+                            if block_starts.contains_key(&i) {
+                                break;
+                            }
+                            if let Stmt::Break = body[i] {
+                                self.br_uncond(&end_lbl);
+                                i += 1;
+                                break;
+                            }
                             self.emit_stmt(&body[i], ret_ty);
                             i += 1;
                         }
-                        if !self.terminated { self.br_uncond(&end_lbl); }
+                        if !self.terminated {
+                            self.br_uncond(&end_lbl);
+                        }
                         continue;
                     }
                     i += 1;
@@ -1624,29 +2666,62 @@ impl Emitter {
                             self.start_block(&next_lbl);
                         } else {
                             let cmp = self.new_tmp();
-                            let _ = writeln!(self.buf, "  {} = icmp eq i32 {}, {}", cmp, cstr, val_str);
+                            let _ =
+                                writeln!(self.buf, "  {} = icmp eq i32 {}, {}", cmp, cstr, val_str);
                             let next_lbl = self.new_label();
                             self.br_cond(&cmp, lbl, &next_lbl);
                             self.start_block(&next_lbl);
                         }
                         jumped = true;
                     } else {
-                        if !jumped { self.br_uncond(lbl); jumped = true; }
+                        if !jumped {
+                            self.br_uncond(lbl);
+                            jumped = true;
+                        }
                     }
                 }
-                if !jumped { self.br_uncond(&end_lbl); }
+                if !jumped {
+                    self.br_uncond(&end_lbl);
+                }
                 self.start_block(&end_lbl);
             }
-            Stmt::Break => { if let Some((break_lbl, _cont_lbl)) = self.loop_stack.last().cloned().or_else(|| self.switch_stack.last().map(|l| (l.clone(), String::new()))) { self.br_uncond(&break_lbl); } }
-            Stmt::Continue => { if let Some((_break_lbl, cont_lbl)) = self.loop_stack.last().cloned() { self.br_uncond(&cont_lbl); } }
+            Stmt::Break => {
+                if let Some((break_lbl, _cont_lbl)) = self
+                    .loop_stack
+                    .last()
+                    .cloned()
+                    .or_else(|| self.switch_stack.last().map(|l| (l.clone(), String::new())))
+                {
+                    self.br_uncond(&break_lbl);
+                }
+            }
+            Stmt::Continue => {
+                if let Some((_break_lbl, cont_lbl)) = self.loop_stack.last().cloned() {
+                    self.br_uncond(&cont_lbl);
+                }
+            }
             Stmt::Return(e) => {
-                if self.terminated { return; }
+                if self.terminated {
+                    return;
+                }
                 let (val_str, _cval) = self.emit_expr(e);
-                match ret_ty { Type::Void => { let _ = writeln!(self.buf, "  ret void"); }
-                               _ => { let _ = writeln!(self.buf, "  ret i32 {}", val_str); } }
+                match ret_ty {
+                    Type::Void => {
+                        let _ = writeln!(self.buf, "  ret void");
+                    }
+                    _ => {
+                        let _ = writeln!(self.buf, "  ret i32 {}", val_str);
+                    }
+                }
                 self.terminated = true;
             }
-            Stmt::Decl { name, ty, init, storage, .. } => {
+            Stmt::Decl {
+                name,
+                ty,
+                init,
+                storage,
+                ..
+            } => {
                 // Function-scope static local: emit module-scope internal global and map ident to @global
                 if matches!(storage, Some(parse::ast::Storage::Static)) {
                     let gname = format!("__static_{}_{}", self.current_fn, name);
@@ -1656,19 +2731,25 @@ impl Emitter {
                                 let init_val = if let Some(e) = init {
                                     match e {
                                         Expr::StringLiteral(repr) => {
-                                            let (sname, len) = self.ensure_string_global_from_repr(repr);
+                                            let (sname, len) =
+                                                self.ensure_string_global_from_repr(repr);
                                             format!("getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)", len, sname)
                                         }
                                         Expr::Cast { expr, .. } => {
                                             if let Expr::StringLiteral(repr) = &**expr {
-                                                let (sname, len) = self.ensure_string_global_from_repr(repr);
+                                                let (sname, len) =
+                                                    self.ensure_string_global_from_repr(repr);
                                                 format!("getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)", len, sname)
                                             } else {
                                                 "null".to_string()
                                             }
                                         }
                                         Expr::IntLiteral(s) => {
-                                            if parse_int_repr(s) == 0 { "null".to_string() } else { "null".to_string() }
+                                            if parse_int_repr(s) == 0 {
+                                                "null".to_string()
+                                            } else {
+                                                "null".to_string()
+                                            }
                                         }
                                         _ => "null".to_string(),
                                     }
@@ -1698,10 +2779,15 @@ impl Emitter {
                         Type::Array(_inner, _n) => {
                             let alloca_name = format!("%{}", name);
                             if let Some(arr_str) = self.llvm_int_array_type_str(ty) {
-                                let _ = writeln!(self.buf, "  {} = alloca {}", alloca_name, arr_str);
+                                let _ =
+                                    writeln!(self.buf, "  {} = alloca {}", alloca_name, arr_str);
                             } else {
                                 let total_sz = self.sizeof_t_usize(ty);
-                                let _ = writeln!(self.buf, "  {} = alloca i8, i64 {}", alloca_name, total_sz);
+                                let _ = writeln!(
+                                    self.buf,
+                                    "  {} = alloca i8, i64 {}",
+                                    alloca_name, total_sz
+                                );
                             }
                             self.locals.insert(name.clone(), alloca_name.clone());
                             self.locals_ty.insert(name.clone(), ty.clone());
@@ -1711,8 +2797,16 @@ impl Emitter {
                             let alloca_name = format!("%{}", name);
                             let _ = writeln!(self.buf, "  {} = alloca ptr", alloca_name);
                             self.locals.insert(name.clone(), alloca_name.clone());
-                            self.locals_ty.insert(name.clone(), Type::Pointer(inner.clone()));
-                            if let Some(e) = init { let (val_str, _cval) = self.emit_expr(e); let _ = writeln!(self.buf, "  store ptr {}, ptr {}", val_str, alloca_name); }
+                            self.locals_ty
+                                .insert(name.clone(), Type::Pointer(inner.clone()));
+                            if let Some(e) = init {
+                                let (val_str, _cval) = self.emit_expr(e);
+                                let _ = writeln!(
+                                    self.buf,
+                                    "  store ptr {}, ptr {}",
+                                    val_str, alloca_name
+                                );
+                            }
                             self.consts.remove(name);
                         }
                         Type::Struct(tag) => {
@@ -1720,7 +2814,8 @@ impl Emitter {
                             let sz = self.struct_layouts.get(tag).map(|l| l.size).unwrap_or(8);
                             let _ = writeln!(self.buf, "  {} = alloca i8, i64 {}", alloca_name, sz);
                             self.locals.insert(name.clone(), alloca_name.clone());
-                            self.locals_ty.insert(name.clone(), Type::Struct(tag.clone()));
+                            self.locals_ty
+                                .insert(name.clone(), Type::Struct(tag.clone()));
                             if let Some(_e) = init { /* aggregate init not supported yet */ }
                             self.consts.remove(name);
                         }
@@ -1729,7 +2824,8 @@ impl Emitter {
                             let sz = self.union_layouts.get(tag).map(|l| l.size).unwrap_or(8);
                             let _ = writeln!(self.buf, "  {} = alloca i8, i64 {}", alloca_name, sz);
                             self.locals.insert(name.clone(), alloca_name.clone());
-                            self.locals_ty.insert(name.clone(), Type::Union(tag.clone()));
+                            self.locals_ty
+                                .insert(name.clone(), Type::Union(tag.clone()));
                             if let Some(_e) = init { /* aggregate init not supported yet */ }
                             self.consts.remove(name);
                         }
@@ -1740,8 +2836,16 @@ impl Emitter {
                             self.locals_ty.insert(name.clone(), ty.clone());
                             if let Some(e) = init {
                                 let (val_str, cval) = self.emit_expr(e);
-                                let _ = writeln!(self.buf, "  store i32 {}, ptr {}", val_str, alloca_name);
-                                if let Some(c) = cval { self.consts.insert(name.clone(), c); } else { self.consts.remove(name); }
+                                let _ = writeln!(
+                                    self.buf,
+                                    "  store i32 {}, ptr {}",
+                                    val_str, alloca_name
+                                );
+                                if let Some(c) = cval {
+                                    self.consts.insert(name.clone(), c);
+                                } else {
+                                    self.consts.remove(name);
+                                }
                             }
                         }
                     }
@@ -1752,22 +2856,32 @@ impl Emitter {
             Stmt::Typedef { .. } => { /* no runtime effect */ }
             Stmt::Label(name) => {
                 let lbl = self.ensure_user_label(name);
-                if self.in_block && !self.terminated { self.br_uncond(&lbl); }
+                if self.in_block && !self.terminated {
+                    self.br_uncond(&lbl);
+                }
                 self.start_block(&lbl);
             }
             Stmt::Goto(name) => {
                 let lbl = self.ensure_user_label(name);
                 self.br_uncond(&lbl);
             }
-            Stmt::ExprStmt(e) => { let _ = self.emit_expr(e); }
+            Stmt::ExprStmt(e) => {
+                let _ = self.emit_expr(e);
+            }
         }
     }
 }
 
 fn round_up(x: usize, align: usize) -> usize {
-    if align == 0 { return x; }
+    if align == 0 {
+        return x;
+    }
     let rem = x % align;
-    if rem == 0 { x } else { x + (align - rem) }
+    if rem == 0 {
+        x
+    } else {
+        x + (align - rem)
+    }
 }
 fn parse_int_repr(repr: &str) -> i32 {
     let mut s = repr.trim();
@@ -1775,7 +2889,7 @@ fn parse_int_repr(repr: &str) -> i32 {
     loop {
         if let Some(ch) = s.chars().last() {
             if matches!(ch, 'u' | 'U' | 'l' | 'L') {
-                s = &s[..s.len()-1];
+                s = &s[..s.len() - 1];
                 continue;
             }
         }
@@ -1799,12 +2913,20 @@ fn decode_c_string(repr: &str) -> Vec<u8> {
     let cs: Vec<char> = repr.chars().collect();
     let mut i = 0usize;
     // Skip leading quote if present
-    if !cs.is_empty() && cs[0] == '"' { i = 1; }
+    if !cs.is_empty() && cs[0] == '"' {
+        i = 1;
+    }
     while i < cs.len() {
         let ch = cs[i];
         if !esc {
-            if ch == '"' { break; }
-            if ch == '\\' { esc = true; i += 1; continue; }
+            if ch == '"' {
+                break;
+            }
+            if ch == '\\' {
+                esc = true;
+                i += 1;
+                continue;
+            }
             bytes.push(ch as u8);
             i += 1;
             continue;
@@ -1827,7 +2949,9 @@ fn decode_c_string(repr: &str) -> Vec<u8> {
                         val = (val << 4) | (dv as u8);
                         cnt += 1;
                         i += 1;
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
                 bytes.push(val);
             }
@@ -1841,11 +2965,15 @@ fn decode_c_string(repr: &str) -> Vec<u8> {
                         val = (val << 3) | ((c as u16) - ('0' as u16));
                         cnt += 1;
                         i += 1;
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
                 bytes.push((val & 0xFF) as u8);
             }
-            _ => { bytes.push(ch as u8); }
+            _ => {
+                bytes.push(ch as u8);
+            }
         }
         i += 1;
     }
@@ -1853,7 +2981,6 @@ fn decode_c_string(repr: &str) -> Vec<u8> {
     bytes.push(0);
     bytes
 }
-
 
 fn llvm_escape_c_bytes(bytes: &[u8]) -> String {
     let mut s = String::new();
@@ -1883,8 +3010,12 @@ pub fn verify_llvm_text(ir: &str) -> anyhow::Result<()> {
 
     for raw in ir.lines() {
         let line = raw.trim();
-        if line.is_empty() { continue; }
-        if line.starts_with(';') { continue; }
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(';') {
+            continue;
+        }
 
         if line.starts_with("define ") {
             // starting a new function, reset state
@@ -1928,12 +3059,16 @@ pub fn verify_llvm_text(ir: &str) -> anyhow::Result<()> {
 
         // Detect terminators and collect branch targets
         if line.starts_with("ret ") {
-            if saw_term { return Err(anyhow!("multiple terminators in block")); }
+            if saw_term {
+                return Err(anyhow!("multiple terminators in block"));
+            }
             saw_term = true;
             continue;
         }
         if line.starts_with("br ") {
-            if saw_term { return Err(anyhow!("multiple terminators in block")); }
+            if saw_term {
+                return Err(anyhow!("multiple terminators in block"));
+            }
             // collect targets
             // br label %X
             if let Some(idx) = line.find("label %") {
@@ -1941,14 +3076,22 @@ pub fn verify_llvm_text(ir: &str) -> anyhow::Result<()> {
                 let mut parts = rest.split(|c| c == ',' || c == ' ');
                 if let Some(t) = parts.next() {
                     let t = t.trim();
-                    if !t.is_empty() { branch_targets.push(t.to_string()); }
+                    if !t.is_empty() {
+                        branch_targets.push(t.to_string());
+                    }
                 }
                 // br i1 ..., label %T, label %E
                 if let Some(idx2) = line.rfind("label %") {
                     if idx2 != idx {
                         let rest2 = &line[idx2 + "label %".len()..];
-                        let t2 = rest2.split(|c| c == ',' || c == ' ').next().unwrap_or("").trim();
-                        if !t2.is_empty() { branch_targets.push(t2.to_string()); }
+                        let t2 = rest2
+                            .split(|c| c == ',' || c == ' ')
+                            .next()
+                            .unwrap_or("")
+                            .trim();
+                        if !t2.is_empty() {
+                            branch_targets.push(t2.to_string());
+                        }
                     }
                 }
             }

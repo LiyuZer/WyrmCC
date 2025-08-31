@@ -19,10 +19,26 @@ fn arrays_of_structs_store_and_load_field() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Expect we use byte-wise GEPs for member addressing
-    assert!(ir.contains("getelementptr inbounds i8"), "expected i8 GEP for member addressing, IR:\n{}", ir);
+    assert!(
+        ir.contains("getelementptr inbounds i8"),
+        "expected i8 GEP for member addressing, IR:\n{}",
+        ir
+    );
     // Expect the store of 7 into the field
-    assert!(ir.contains("store i32 7"), "expected store of 7 to a[1].y, IR:\n{}", ir);
+    assert!(
+        ir.contains("store i32 7"),
+        "expected store of 7 to a[1].y, IR:\n{}",
+        ir
+    );
     // Expect we load the value and then return (value may be in an SSA, not literal)
-    assert!(ir.contains("load i32, ptr"), "expected load from the member pointer, IR:\n{}", ir);
-    assert!(ir.contains("ret i32"), "expected a return instruction, IR:\n{}", ir);
+    assert!(
+        ir.contains("load i32, ptr"),
+        "expected load from the member pointer, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ret i32"),
+        "expected a return instruction, IR:\n{}",
+        ir
+    );
 }

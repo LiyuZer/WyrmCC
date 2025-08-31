@@ -31,8 +31,24 @@ G2(>,=)
         .collect();
 
     // Expect expansions present; order corresponds to the four invocation lines
-    assert!(lines.iter().any(|l| l.contains("foobar")), "expected foobar in output:\n{}", out);
-    assert!(lines.iter().any(|l| l.contains("12")), "expected 12 in output:\n{}", out);
-    assert!(lines.iter().any(|l| l.contains(">>")), "expected >> in output:\n{}", out);
-    assert!(lines.iter().any(|l| l.contains(">=")), "expected >= in output:\n{}", out);
+    assert!(
+        lines.iter().any(|l| l.contains("foobar")),
+        "expected foobar in output:\n{}",
+        out
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("12")),
+        "expected 12 in output:\n{}",
+        out
+    );
+    assert!(
+        lines.iter().any(|l| l.contains(">>")),
+        "expected >> in output:\n{}",
+        out
+    );
+    assert!(
+        lines.iter().any(|l| l.contains(">=")),
+        "expected >= in output:\n{}",
+        out
+    );
 }

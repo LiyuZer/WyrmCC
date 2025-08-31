@@ -37,12 +37,18 @@ fn cast_int_to_ptr_ir_patterns() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Expect an inttoptr from i32 to ptr
-    assert!(ir.contains("inttoptr i32"), "expected inttoptr i32 .. to ptr in IR, got:\n{}", ir);
+    assert!(
+        ir.contains("inttoptr i32"),
+        "expected inttoptr i32 .. to ptr in IR, got:\n{}",
+        ir
+    );
 
     // Expect a comparison for p==0. The compare itself returns i1, but operands should be i32 or ptr.
     assert!(
-        ir.contains("icmp eq i32") || ir.contains("icmp ne i32") ||
-        ir.contains("icmp eq ptr") || ir.contains("icmp ne ptr"),
+        ir.contains("icmp eq i32")
+            || ir.contains("icmp ne i32")
+            || ir.contains("icmp eq ptr")
+            || ir.contains("icmp ne ptr"),
         "expected an icmp (on i32 or ptr operands) for p==0, IR:\n{}",
         ir
     );
@@ -63,8 +69,16 @@ fn cast_ptr_to_ptr_bitcast_ir_patterns() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Expect a bitcast between ptr types
-    assert!(ir.contains("bitcast ptr "), "expected bitcast ptr .. to ptr in IR, got:\n{}", ir);
+    assert!(
+        ir.contains("bitcast ptr "),
+        "expected bitcast ptr .. to ptr in IR, got:\n{}",
+        ir
+    );
 
     // Ensure the comparison on p is present to force use of p downstream
-    assert!(ir.contains("icmp ") || ir.contains("icmp ne"), "expected an icmp for p!=0, IR:\n{}", ir);
+    assert!(
+        ir.contains("icmp ") || ir.contains("icmp ne"),
+        "expected an icmp for p!=0, IR:\n{}",
+        ir
+    );
 }

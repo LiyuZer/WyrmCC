@@ -16,12 +16,7 @@ fn run_puts_hello() {
     let dir = tempdir().unwrap();
     let c_path = dir.path().join("hello.c");
     let mut f = fs::File::create(&c_path).unwrap();
-    writeln!(
-        f,
-        "{}",
-        r#"int main(void) { puts("hello"); return 0; }"#
-    )
-    .unwrap();
+    writeln!(f, "{}", r#"int main(void) { puts("hello"); return 0; }"#).unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)

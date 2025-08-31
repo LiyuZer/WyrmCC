@@ -15,8 +15,12 @@ fn parse_assignment_basic() {
     assert_eq!(f.name, "main");
     assert_eq!(f.body.len(), 3);
 
-    assert!(matches!(f.body[0], Stmt::Decl { ref name, ty: Type::Int, init: None, .. } if name == "x"));
-    assert!(matches!(f.body[1], Stmt::ExprStmt(Expr::Assign { ref name, ref value }) if name == "x" && matches!(&**value, Expr::IntLiteral(ref s) if s == "5")));
+    assert!(
+        matches!(f.body[0], Stmt::Decl { ref name, ty: Type::Int, init: None, .. } if name == "x")
+    );
+    assert!(
+        matches!(f.body[1], Stmt::ExprStmt(Expr::Assign { ref name, ref value }) if name == "x" && matches!(&**value, Expr::IntLiteral(ref s) if s == "5"))
+    );
     assert!(matches!(f.body[2], Stmt::Return(Expr::Ident(ref s)) if s == "x"));
 }
 
@@ -31,7 +35,10 @@ fn parse_logical_not() {
     let f = &tu.functions[0];
     assert!(matches!(
         f.body[0],
-        Stmt::Return(Expr::Unary { op: UnaryOp::LogicalNot, .. })
+        Stmt::Return(Expr::Unary {
+            op: UnaryOp::LogicalNot,
+            ..
+        })
     ));
 }
 
@@ -45,7 +52,10 @@ fn parse_logical_and_or() {
     let f1 = &tu1.functions[0];
     assert!(matches!(
         f1.body[0],
-        Stmt::Return(Expr::Binary { op: BinaryOp::LAnd, .. })
+        Stmt::Return(Expr::Binary {
+            op: BinaryOp::LAnd,
+            ..
+        })
     ));
 
     // OR
@@ -56,7 +66,10 @@ fn parse_logical_and_or() {
     let f2 = &tu2.functions[0];
     assert!(matches!(
         f2.body[0],
-        Stmt::Return(Expr::Binary { op: BinaryOp::LOr, .. })
+        Stmt::Return(Expr::Binary {
+            op: BinaryOp::LOr,
+            ..
+        })
     ));
 }
 
@@ -70,7 +83,13 @@ fn parse_for_empty_sections() {
     let tu = parse_translation_unit(src).expect("parse ok");
     let f = &tu.functions[0];
     assert!(matches!(f.body[0], Stmt::For { .. }));
-    if let Stmt::For { ref init, ref cond, ref post, ref body } = f.body[0] {
+    if let Stmt::For {
+        ref init,
+        ref cond,
+        ref post,
+        ref body,
+    } = f.body[0]
+    {
         assert!(init.is_none());
         assert!(cond.is_none());
         assert!(post.is_none());
@@ -93,7 +112,13 @@ fn parse_for_with_init_cond_post() {
     let f = &tu.functions[0];
     assert!(matches!(f.body[0], Stmt::Decl { ref name, ty: Type::Int, .. } if name == "i"));
     assert!(matches!(f.body[1], Stmt::For { .. }));
-    if let Stmt::For { ref init, ref cond, ref post, ref body } = f.body[1] {
+    if let Stmt::For {
+        ref init,
+        ref cond,
+        ref post,
+        ref body,
+    } = f.body[1]
+    {
         // init: i = 0
         match init {
             Some(Expr::Assign { name, value }) => {
@@ -104,7 +129,11 @@ fn parse_for_with_init_cond_post() {
         }
         // cond: i < 3
         match cond {
-            Some(Expr::Binary { op: BinaryOp::Lt, lhs, rhs }) => {
+            Some(Expr::Binary {
+                op: BinaryOp::Lt,
+                lhs,
+                rhs,
+            }) => {
                 assert!(matches!(**lhs, Expr::Ident(ref s) if s == "i"));
                 assert!(matches!(**rhs, Expr::IntLiteral(ref s) if s == "3"));
             }
@@ -115,7 +144,11 @@ fn parse_for_with_init_cond_post() {
             Some(Expr::Assign { name, value }) => {
                 assert_eq!(name, "i");
                 match &**value {
-                    Expr::Binary { op: BinaryOp::Plus, lhs, rhs } => {
+                    Expr::Binary {
+                        op: BinaryOp::Plus,
+                        lhs,
+                        rhs,
+                    } => {
                         assert!(matches!(**lhs, Expr::Ident(ref s) if s == "i"));
                         assert!(matches!(**rhs, Expr::IntLiteral(ref s) if s == "1"));
                     }

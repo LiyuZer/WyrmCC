@@ -28,7 +28,11 @@ fn parse_typedef_shadowing_in_inner_block() {
         }
     "#;
     let tu = parse_translation_unit(src);
-    assert!(tu.is_ok(), "expected parse ok with shadowed typedef, got {:?}", tu);
+    assert!(
+        tu.is_ok(),
+        "expected parse ok with shadowed typedef, got {:?}",
+        tu
+    );
 }
 
 #[test]
@@ -42,7 +46,11 @@ fn parse_typedef_with_pointer() {
         }
     "#;
     let tu = parse_translation_unit(src);
-    assert!(tu.is_ok(), "expected parse ok for pointer typedef, got {:?}", tu);
+    assert!(
+        tu.is_ok(),
+        "expected parse ok for pointer typedef, got {:?}",
+        tu
+    );
 }
 
 #[test]
@@ -55,5 +63,9 @@ fn parse_sizeof_and_cast_with_typedef() {
         }
     "#;
     let tu = parse_translation_unit(src);
-    assert!(tu.is_ok(), "expected parse ok for sizeof/cast with typedef, got {:?}", tu);
+    assert!(
+        tu.is_ok(),
+        "expected parse ok for sizeof/cast with typedef, got {:?}",
+        tu
+    );
 }

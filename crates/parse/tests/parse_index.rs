@@ -11,7 +11,11 @@ fn parse_index_basic() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let dump = format!("{:#?}", tu);
-    assert!(dump.contains("Index"), "AST should contain Index node, got:\n{}", dump);
+    assert!(
+        dump.contains("Index"),
+        "AST should contain Index node, got:\n{}",
+        dump
+    );
 }
 
 #[test]
@@ -25,5 +29,9 @@ fn parse_index_with_expression() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
     let dump = format!("{:#?}", tu);
-    assert!(dump.contains("Index"), "AST should contain Index node for p[i+1], got:\n{}", dump);
+    assert!(
+        dump.contains("Index"),
+        "AST should contain Index node for p[i+1], got:\n{}",
+        dump
+    );
 }

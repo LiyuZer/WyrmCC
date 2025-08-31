@@ -14,7 +14,7 @@ Next Work
      - Zero pad width: printf("%05d\n", 7) -> 00007
      - Left-justify: printf("%-6dX\n", 7) -> "7     X"
      - Plus sign for positives: printf("%+d\n", 7) -> +7
-     - Space flag: printf("% d\n", 7) ->  7
+     - Space flag: printf(" %d\n", 7) ->  7
      - Alternate form for hex: printf("%#x %#X\n", 255, 255) -> 0xff 0XFF
      - Precision on strings: printf("%.3s\n", "hello") -> hel
      - Literal percent: printf("%%\n") -> %
@@ -232,3 +232,39 @@ Execution Checklist – Next Actions
 - [ ] Backend: implement indirect call lowering
 - [ ] Run: cargo test -p parse -p sema -p backend -p wyrmcc until green
 
+[2025-08-30] Function Pointers End-to-End — Completed
+- Parser
+  - Function-pointer declarators supported across typedef/local/global: `typedef int (*F)(int);`, `int (*fp)(int,int);`.
+- Sema
+  - Function signatures table (built-ins + TU functions) in place; arity and fixed-arg type checking (incl. variadics) implemented.
+  - Indirect calls validated via Expr::CallPtr and also via Expr::Call when the callee resolves to a function type or pointer-to-function.
+  - Array-to-pointer decay on arguments used in checks.
+- Backend
+  - Indirect calls lowered: Expr::CallPtr emits `call i32 %fnptr(... )` using current calling convention (ptr for pointers/format, i32 for ints).
+  - Existing direct-call and varargs handling (puts/printf) remain green.
+- Tests
+  - Backend: `crates/backend/tests/indirect_call.rs` passes.
+  - Driver: `crates/driver/tests/run_fn_ptr.rs` passes (switching targets via &add/&sub prints expected results).
+  - Full workspace is green (`cargo test -p parse -p sema -p backend -p wyrmcc`).
+
+Checklist delta
+- C. Semantics – Function pointers: end-to-end coverage achieved for current subset (Expr::CallPtr typing; designators accepted in calls). Further polish on “designators decay to pointer” and function-type compatibility can be handled during declarator grammar generalization.
+- E. Backend – Indirect calls via function pointers: implemented (no bitcasts needed for current simplified i32/ptr convention).
+
+Next Focus
+1) Aggregate initializers (minimal)
+   - Parser: brace initializers for arrays/structs (flat and simple nested cases).
+   - Sema: type-check initializer lists; zero-initialization semantics.
+   - Backend: emit constant aggregates for globals; simple stores for locals; zero-init support.
+   - Tests: parse + sema unit tests; backend IR for globals; driver runtime for basic aggregate init and access.
+2) Declarator grammar breadth
+   - Parenthesized declarators beyond fn-ptr basics, abstract declarators (casts, parameter types without names), pointers-to-arrays and arrays-of-pointers; reject arrays of functions.
+   - Tests first (parse-focused), then implementation.
+3) UAC expansion (integers)
+   - Broaden matrices across signed/unsigned mixes for arithmetic, comparisons, shifts, and ?:; add sema tests and a few driver runs.
+
+Execution Checklist — Next Actions (updated)
+- [ ] Aggregates: add parser+sema tests for brace initializers; implement; backend emission for zero-inits and simple lists; driver runtime checks.
+- [ ] Declarators: add tests for parenthesized/abstract declarators and complex ptr/array combos; extend parser accordingly; keep sema tolerant; adjust as needed.
+- [ ] UAC: extend integer conversion tests across operators; align sema/backend behaviors where gaps appear.
+- [ ] Keep suites green: `cargo test -p parse -p sema -p backend -p wyrmcc`.

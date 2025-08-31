@@ -10,7 +10,9 @@ use std::process::Command;
 use tempfile::tempdir;
 
 #[cfg(unix)]
-fn llvm_tools() -> (&'static str, &'static str) { ("clang-18", "llc-18") }
+fn llvm_tools() -> (&'static str, &'static str) {
+    ("clang-18", "llc-18")
+}
 
 // Validate integer promotions (char/short families) and UAC results at runtime.
 #[cfg(unix)]
@@ -21,7 +23,10 @@ fn promotions_and_uac_runtime() {
     let c_path = dir.path().join("promos_uac.c");
     let mut f = fs::File::create(&c_path).unwrap();
 
-    write!(f, "{}", r#"int main(void) {
+    write!(
+        f,
+        "{}",
+        r#"int main(void) {
     signed char sc = -1;
     int x = sc + 2;              // sc promotes to int -> 1
     if (x != 1) return 101;
@@ -42,7 +47,9 @@ fn promotions_and_uac_runtime() {
 
     return 0;
 }
-"#).unwrap();
+"#
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
@@ -61,7 +68,10 @@ fn conditional_operator_uac_runtime() {
     let c_path = dir.path().join("cond_uac.c");
     let mut f = fs::File::create(&c_path).unwrap();
 
-    write!(f, "{}", r#"int main(void) {
+    write!(
+        f,
+        "{}",
+        r#"int main(void) {
     int i = -1;
     unsigned int uu = 1;
     unsigned int t = 1 ? i : uu; // UAC: result is unsigned, i converts to UINT_MAX
@@ -73,7 +83,9 @@ fn conditional_operator_uac_runtime() {
 
     return 0;
 }
-"#).unwrap();
+"#
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
@@ -85,8 +97,12 @@ fn conditional_operator_uac_runtime() {
 
 #[cfg(not(unix))]
 #[test]
-fn promotions_and_uac_runtime_skip() { assert!(true); }
+fn promotions_and_uac_runtime_skip() {
+    assert!(true);
+}
 
 #[cfg(not(unix))]
 #[test]
-fn conditional_operator_uac_runtime_skip() { assert!(true); }
+fn conditional_operator_uac_runtime_skip() {
+    assert!(true);
+}

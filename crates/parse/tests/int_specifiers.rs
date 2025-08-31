@@ -1,4 +1,4 @@
-use parse::{parse_translation_unit, ast::Type};
+use parse::{ast::Type, parse_translation_unit};
 
 fn ty_of_global(src: &str, name: &str) -> Type {
     let tu = parse_translation_unit(src).expect("parse tu");
@@ -66,13 +66,19 @@ fn arrays_and_pointers_with_kinds() {
     let src_arr = r#"
         unsigned char buf[3];
     "#;
-    assert_eq!(ty_of_global(src_arr, "buf"), Type::Array(Box::new(Type::UChar), 3));
+    assert_eq!(
+        ty_of_global(src_arr, "buf"),
+        Type::Array(Box::new(Type::UChar), 3)
+    );
 
     // pointer to unsigned short
     let src_ptr = r#"
         unsigned short *p;
     "#;
-    assert_eq!(ty_of_global(src_ptr, "p"), Type::Pointer(Box::new(Type::UShort)));
+    assert_eq!(
+        ty_of_global(src_ptr, "p"),
+        Type::Pointer(Box::new(Type::UShort))
+    );
 }
 
 #[test]

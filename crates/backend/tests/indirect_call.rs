@@ -16,9 +16,21 @@ fn indirect_call_through_conditional_pointer() {
     let ir = emit_llvm_ir(&tu, "indirect").expect("emit ok");
 
     // Should contain definitions for add and sub
-    assert!(ir.contains("define i32 @add("), "expected add definition in IR:\n{}", ir);
-    assert!(ir.contains("define i32 @sub("), "expected sub definition in IR:\n{}", ir);
+    assert!(
+        ir.contains("define i32 @add("),
+        "expected add definition in IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("define i32 @sub("),
+        "expected sub definition in IR:\n{}",
+        ir
+    );
 
     // Expect an indirect call site (callee is a value, not a symbol); with opaque pointers this looks like 'call i32 %...'
-    assert!(ir.contains("call i32 %"), "expected an indirect call (callee as %reg) in IR:\n{}", ir);
+    assert!(
+        ir.contains("call i32 %"),
+        "expected an indirect call (callee as %reg) in IR:\n{}",
+        ir
+    );
 }

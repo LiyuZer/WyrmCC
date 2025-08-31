@@ -29,8 +29,16 @@ fn set_and_get_2d() {
     );
 
     // Expect a store of 7 and a load/ret path
-    assert!(ir.contains("store i32 7, ptr"), "expected store of 7 into a[1][2], IR:\n{}", ir);
-    assert!(ir.contains("ret i32"), "expected function to return an i32, IR:\n{}", ir);
+    assert!(
+        ir.contains("store i32 7, ptr"),
+        "expected store of 7 into a[1][2], IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ret i32"),
+        "expected function to return an i32, IR:\n{}",
+        ir
+    );
 }
 
 #[test]
@@ -63,6 +71,14 @@ fn pointer_to_row_then_index() {
     );
 
     // Expect store of 5 through pointer and return path
-    assert!(ir.contains("store i32 5, ptr"), "expected store of 5 via p[2], IR:\n{}", ir);
-    assert!(ir.contains("ret i32"), "expected function to return an i32, IR:\n{}", ir);
+    assert!(
+        ir.contains("store i32 5, ptr"),
+        "expected store of 5 via p[2], IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("ret i32"),
+        "expected function to return an i32, IR:\n{}",
+        ir
+    );
 }

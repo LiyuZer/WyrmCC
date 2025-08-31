@@ -20,14 +20,17 @@ fn run_printf_zero_pad_width() {
         f,
         "{}",
         r#"int main(void) { printf("%05d\n", 7); return 0; }"#
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
         .env("WYRMC_LLC", llc)
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
-    cmd.assert().success().stdout(predicate::str::contains("00007\n"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("00007\n"));
 }
 
 #[test]
@@ -40,14 +43,17 @@ fn run_printf_left_justify() {
         f,
         "{}",
         r#"int main(void) { printf("%-6dX\n", 7); return 0; }"#
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
         .env("WYRMC_LLC", llc)
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
-    cmd.assert().success().stdout(predicate::str::contains("7     X\n"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("7     X\n"));
 }
 
 #[test]
@@ -60,14 +66,17 @@ fn run_printf_plus_sign() {
         f,
         "{}",
         r#"int main(void) { printf("%+d\n", 7); return 0; }"#
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
         .env("WYRMC_LLC", llc)
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
-    cmd.assert().success().stdout(predicate::str::contains("+7\n"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("+7\n"));
 }
 
 #[test]
@@ -80,14 +89,17 @@ fn run_printf_space_flag() {
         f,
         "{}",
         r#"int main(void) { printf("% d\n", 7); return 0; }"#
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
         .env("WYRMC_LLC", llc)
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
-    cmd.assert().success().stdout(predicate::str::contains(" 7\n"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(" 7\n"));
 }
 
 #[test]
@@ -100,14 +112,17 @@ fn run_printf_alternate_hex() {
         f,
         "{}",
         r#"int main(void) { printf("%#x %#X\n", 255, 255); return 0; }"#
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
         .env("WYRMC_LLC", llc)
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
-    cmd.assert().success().stdout(predicate::str::contains("0xff 0XFF\n"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("0xff 0XFF\n"));
 }
 
 #[test]
@@ -120,14 +135,17 @@ fn run_printf_string_precision() {
         f,
         "{}",
         r#"int main(void) { printf("%.3s\n", "hello"); return 0; }"#
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
         .env("WYRMC_LLC", llc)
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
-    cmd.assert().success().stdout(predicate::str::contains("hel\n"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("hel\n"));
 }
 
 #[test]
@@ -136,16 +154,14 @@ fn run_printf_literal_percent() {
     let dir = tempdir().unwrap();
     let c_path = dir.path().join("printf_percent.c");
     let mut f = fs::File::create(&c_path).unwrap();
-    writeln!(
-        f,
-        "{}",
-        r#"int main(void) { printf("%%\n"); return 0; }"#
-    ).unwrap();
+    writeln!(f, "{}", r#"int main(void) { printf("%%\n"); return 0; }"#).unwrap();
 
     let mut cmd = Command::cargo_bin("wyrmcc").unwrap();
     cmd.env("WYRMC_CLANG", clang)
         .env("WYRMC_LLC", llc)
         .args(["run", c_path.to_string_lossy().as_ref()]);
 
-    cmd.assert().success().stdout(predicate::str::contains("%\n"));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("%\n"));
 }

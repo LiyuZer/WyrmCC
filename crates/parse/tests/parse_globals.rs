@@ -1,5 +1,5 @@
-use parse::{parse_translation_unit};
-use parse::ast::{Type, Expr, Storage};
+use parse::ast::{Expr, Storage, Type};
+use parse::parse_translation_unit;
 
 #[test]
 fn parse_global_int_init() {
@@ -9,7 +9,12 @@ fn parse_global_int_init() {
     "#;
     let tu = parse_translation_unit(src).expect("parse ok");
 
-    assert_eq!(tu.globals.len(), 1, "expected 1 global, got {}", tu.globals.len());
+    assert_eq!(
+        tu.globals.len(),
+        1,
+        "expected 1 global, got {}",
+        tu.globals.len()
+    );
     let g = &tu.globals[0];
     assert_eq!(g.name, "g");
     assert!(matches!(g.ty, Type::Int));
@@ -73,7 +78,7 @@ fn parse_global_pointer_to_string_cast() {
                 other => panic!("expected cast to pointer-to-int, got {:?}", other),
             }
             match expr.as_ref() {
-                Expr::StringLiteral(_) => {},
+                Expr::StringLiteral(_) => {}
                 other => panic!("expected string literal in cast init, got {:?}", other),
             }
         }

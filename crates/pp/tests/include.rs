@@ -76,7 +76,11 @@ fn include_cycle_is_detected_and_reported() {
 
     let mut pp = Preprocessor::new();
     let res = pp.preprocess_file_with_includes(&main_c, &[]);
-    assert!(res.is_err(), "expected include-cycle error but got: {:?}", res);
+    assert!(
+        res.is_err(),
+        "expected include-cycle error but got: {:?}",
+        res
+    );
     let err = res.err().unwrap();
     assert!(
         err.to_string().to_lowercase().contains("cycle"),

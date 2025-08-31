@@ -27,10 +27,14 @@ fn quotes_and_backslashes() {
     let got = out.trim_end().to_string();
     assert!(got.starts_with('"') && got.ends_with('"'), "got={:?}", got);
 
-    let inner = &got[1..got.len()-1]; // strip outer quotes
-    assert!(inner.starts_with(r#"\""#) && inner.ends_with(r#"\""#), "inner={:?}", inner);
+    let inner = &got[1..got.len() - 1]; // strip outer quotes
+    assert!(
+        inner.starts_with(r#"\""#) && inner.ends_with(r#"\""#),
+        "inner={:?}",
+        inner
+    );
 
-    let mid = &inner[2..inner.len()-2]; // strip leading and trailing \"
+    let mid = &inner[2..inner.len() - 2]; // strip leading and trailing \"
     assert_eq!(mid, r#" \\\\ "#, "mid={:?}", mid); // exactly four backslashes with spaces
 }
 

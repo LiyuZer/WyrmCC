@@ -34,7 +34,11 @@ fn parses_if_no_else_then_stmt() {
     let tu = tu(src);
     let f = &tu.functions[0];
     match &f.body[0] {
-        Stmt::If { cond, then_branch, else_branch } => {
+        Stmt::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             assert!(matches!(cond, Expr::IntLiteral(ref s) if s == "1"));
             assert_eq!(then_branch.len(), 1);
             assert!(matches!(then_branch[0], Stmt::Return(Expr::IntLiteral(ref s)) if s == "1"));
@@ -52,7 +56,11 @@ fn parses_if_else_with_blocks() {
     let f = &tu.functions[0];
     assert_eq!(f.body.len(), 1);
     match &f.body[0] {
-        Stmt::If { cond, then_branch, else_branch } => {
+        Stmt::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             assert!(matches!(cond, Expr::IntLiteral(ref s) if s == "0"));
             assert_eq!(then_branch.len(), 1);
             assert!(matches!(then_branch[0], Stmt::Return(Expr::IntLiteral(ref s)) if s == "1"));
@@ -114,12 +122,20 @@ fn else_binds_to_nearest_if() {
     let f = &tu.functions[0];
     assert!(matches!(f.body[1], Stmt::Return(Expr::IntLiteral(ref s)) if s == "3"));
     match &f.body[0] {
-        Stmt::If { cond: outer_cond, then_branch, else_branch } => {
+        Stmt::If {
+            cond: outer_cond,
+            then_branch,
+            else_branch,
+        } => {
             assert!(matches!(outer_cond, Expr::IntLiteral(ref s) if s == "1"));
             assert!(else_branch.is_none());
             assert_eq!(then_branch.len(), 1);
             match &then_branch[0] {
-                Stmt::If { cond: inner_cond, then_branch: t2, else_branch: e2 } => {
+                Stmt::If {
+                    cond: inner_cond,
+                    then_branch: t2,
+                    else_branch: e2,
+                } => {
                     assert!(matches!(inner_cond, Expr::IntLiteral(ref s) if s == "0"));
                     assert_eq!(t2.len(), 1);
                     assert!(matches!(t2[0], Stmt::Return(Expr::IntLiteral(ref s)) if s == "1"));

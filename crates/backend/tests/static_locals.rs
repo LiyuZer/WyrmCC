@@ -52,9 +52,21 @@ fn static_local_write_then_read() {
     let ir = emit_llvm_ir(&tu, "test_module").expect("emit ok");
 
     // Expect both a load from and a store to the internal global
-    assert!(ir.contains("@__static_f_s = internal global i32"), "expected internal global for static local s, IR:\n{}", ir);
-    assert!(ir.contains("load i32, ptr @__static_f_s"), "expected load from static local global, IR:\n{}", ir);
-    assert!(ir.contains("store i32") && ir.contains("@__static_f_s"), "expected store to static local global, IR:\n{}", ir);
+    assert!(
+        ir.contains("@__static_f_s = internal global i32"),
+        "expected internal global for static local s, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("load i32, ptr @__static_f_s"),
+        "expected load from static local global, IR:\n{}",
+        ir
+    );
+    assert!(
+        ir.contains("store i32") && ir.contains("@__static_f_s"),
+        "expected store to static local global, IR:\n{}",
+        ir
+    );
 }
 
 #[test]

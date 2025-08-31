@@ -307,3 +307,22 @@ Execution Checklist — Next Actions (refreshed)
 - [x] Declarators: implement parenthesized/abstract declarators sufficient for function pointers and pointer-to-arrays; add tests.
 - [ ] UAC: extend integer conversion tests across operators; close any gaps uncovered.
 - [ ] Keep suites green: `cargo test -p parse -p sema -p backend -p wyrmcc`.
+[2025-08-31] Parser/Sema Maintenance And Void* Nulls
+- Fixed parser: removed duplicated trailing block in crates/parse/src/parser.rs that caused a brace mismatch; parse tests green.
+- Sema: accept null pointer constants (0 and (T*)0) for pointer parameters in direct/indirect calls; updated call checking. void* param/null tests now pass.
+- Full workspace is green (parse, sema, backend, driver).
+
+Checklist Delta
+- C. Semantics – Pointers/arrays: Null pointer constants handling for params — done (0, (T*)0).
+
+Next Focus Options
+1) Composite type rules and incomplete types diagnostics (struct/union forward decls; extern array sizing)
+2) Qualifiers (const/volatile) propagation in assignments/params
+3) Broaden UAC matrices across signed/unsigned mixes (arith, compare, shift, ?:) plus runtime smoke
+4) Driver CLI breadth (-E/-S/-c/-o, -I/-D/-U, multi-input) — basics exist; extend coverage tests
+
+Execution Checklist — Next Actions
+- [ ] Add sema tests for incomplete types and composite type rules; implement diagnostics
+- [ ] Add driver CLI tests for -S/-c/-o and multi-input; fill any gaps
+- [ ] Expand UAC runtime tests; align sema/backend where gaps appear
+- [ ] Keep suites green: cargo test -p parse -p sema -p backend -p wyrmcc

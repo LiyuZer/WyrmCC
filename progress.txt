@@ -268,3 +268,42 @@ Execution Checklist — Next Actions (updated)
 - [ ] Declarators: add tests for parenthesized/abstract declarators and complex ptr/array combos; extend parser accordingly; keep sema tolerant; adjust as needed.
 - [ ] UAC: extend integer conversion tests across operators; align sema/backend behaviors where gaps appear.
 - [ ] Keep suites green: `cargo test -p parse -p sema -p backend -p wyrmcc`.
+
+[2025-08-31] Declarators Grammar Update and Next Focus
+
+Summary
+- Parser
+  - Implemented parenthesized and abstract declarators sufficient for common C89 patterns:
+    - Pointer-to-array variables/typedefs/globals: `int (*p)[N];`, `typedef int (*P)[3];`, and top-level variants.
+    - Function-pointer abstract casts: `(int (*)(int))0;`.
+    - Pointer-to-array abstract casts: `(int (*)[3])0;`.
+    - Continued support for arrays-of-pointers via unparenthesized forms `int *a[3];` and standard array declarators.
+  - Tests added in `crates/parse/tests/parse_parenthesized_abstract_decls.rs` covering local decls, typedef inside a function, and abstract casts.
+- Tests
+  - Full parse, sema, backend, and driver suites remain green after changes.
+- Git
+  - Commits authored as "Eve the Coding Dragon" and pushed regularly to origin (e.g., a0e9e5f).
+
+Checklist Updates
+- A. Lexing/Parsing – Declarator grammar completeness
+  - [x] Parenthesized declarators (baseline: function pointers and pointers-to-arrays)
+  - [x] Abstract declarators (baseline: casts for function-pointers and pointers-to-arrays)
+  - [~] Arrays of pointers, pointers to arrays — basic forms supported; rejecting arrays of functions remains to be enforced in sema.
+  - Qualifiers-on-pointers and full storage-class placement breadth remain future work.
+- G. Testing
+  - Declarators matrix expanded with new parse tests; broader matrix still [ ] for more combinations and edge cases.
+
+Next Focus
+1) Aggregate initializers (minimal)
+   - Parser: brace initializer lists for arrays and structs (simple nested allowed).
+   - Sema: element/field checking, zero-fill remainder, size inference for unsized arrays.
+   - Backend: constant initializers for globals; memset(0) + element stores for locals.
+   - Tests: parse + sema; backend IR for globals; driver runtime for simple sums/field prints.
+2) UAC expansion (integers)
+   - Enrich sema matrix across signed/unsigned widths and operators; add a few runtime checks.
+
+Execution Checklist — Next Actions (refreshed)
+- [ ] Aggregates: add parser+sema tests for brace initializers; implement; backend IR/local init; driver runtime checks.
+- [x] Declarators: implement parenthesized/abstract declarators sufficient for function pointers and pointer-to-arrays; add tests.
+- [ ] UAC: extend integer conversion tests across operators; close any gaps uncovered.
+- [ ] Keep suites green: `cargo test -p parse -p sema -p backend -p wyrmcc`.

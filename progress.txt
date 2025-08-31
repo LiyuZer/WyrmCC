@@ -379,3 +379,12 @@ Next Focus (unchanged sequence)
 1) Aggregates: brace initializers (parser+sema+backend constants/locals), with tests.
 2) UAC expansion (integers) across operators; broaden sema matrices; add runtime smoke.
 3) Driver CLI breadth (-S/-c/-o, flags) tests; multi-input/linking coverage.
+[2025-08-31] Backend Local Aggregate Initializers
+
+- Implemented local aggregate initializer lowering:
+  - Zero-fill local arrays/structs via @llvm.memset.
+  - memcpy for char arrays from string literals.
+  - Per-element and per-field stores for int-like arrays and struct members (including nested array-of-int fields).
+- Added backend tests: crates/backend/tests/local_aggregate_init.rs (memset/memcpy/stores); all passing.
+- Verified existing array_init global tests and workspace remain green.
+

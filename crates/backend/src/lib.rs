@@ -2936,13 +2936,20 @@ impl Emitter {
                     self.locals.insert(name.clone(), format!("@{}", gname));
                     self.locals_ty.insert(name.clone(), ty.clone());
                     self.consts.remove(name);
-                } else {
+                    } else {
                     match ty {
-                        Type::Array(_inner, _n) => {
+                        Type::Array(inner, n) => {
                             let alloca_name = format!("%{}", name);
+                            // Decide alloca type
+                            let mut used_typed_arr = false;
                             if let Some(arr_str) = self.llvm_int_array_type_str(ty) {
-                                let _ =
-                                    writeln!(self.buf, "  {} = alloca {}", alloca_name, arr_str);
+                                let _ = writeln!(self.buf, "  {} = alloca {}", alloca_name, arr_str);
+                                used_typed_arr = true;
+                            } else if matches!(&**inner, Type::Char | Type::SChar | Type::UChar) {
+                                // typed [N x i8] for sized char arrays
+                                let ty_str = format!("[{} x i8]", n);
+                                let _ = writeln!(self.buf, "  {} = alloca {}", alloca_name, ty_str);
+                                used_typed_arr = true;
                             } else {
                                 let total_sz = self.sizeof_t_usize(ty);
                                 let _ = writeln!(
@@ -2953,6 +2960,112 @@ impl Emitter {
                             }
                             self.locals.insert(name.clone(), alloca_name.clone());
                             self.locals_ty.insert(name.clone(), ty.clone());
+
+                            // Initialization for local arrays
+                            if let Some(e) = init {
+                                // Zero-fill entire aggregate first
+                                let total_sz = self.sizeof_t_usize(ty) as i64;
+                                self.add_decl("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)");
+                                let _ = writeln!(
+                                    self.buf,
+                                    "  call void @llvm.memset.p0.i64(ptr {}, i8 0, i64 {}, i1 false)",
+                                    alloca_name, total_sz
+                                );
+
+                                match (&**inner, e) {
+                                    // char array from string literal -> memcpy of literal bytes (incl NUL)
+                                    (Type::Char | Type::SChar | Type::UChar, Expr::StringLiteral(repr)) => {
+                                        let (gname, len) = self.ensure_string_global_from_repr(repr);
+                                        let dst = if used_typed_arr {
+                                            let p = self.new_tmp();
+                                            let _ = writeln!(
+                                                self.buf,
+                                                "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
+                                                p, n, alloca_name
+                                            );
+                                            p
+                                        } else {
+                                            alloca_name.clone()
+                                        };
+                                        let src = self.new_tmp();
+                                        let _ = writeln!(
+                                            self.buf,
+                                            "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
+                                            src, len, gname
+                                        );
+                                        self.add_decl("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+                                        let _ = writeln!(
+                                            self.buf,
+                                            "  call void @llvm.memcpy.p0.p0.i64(ptr {}, ptr {}, i64 {}, i1 false)",
+                                            dst, src, len
+                                        );
+                                    }
+                                    (Type::Char | Type::SChar | Type::UChar, Expr::Cast { expr: inner_e, .. }) => {
+                                        if let Expr::StringLiteral(repr) = &**inner_e {
+                                            let (gname, len) = self.ensure_string_global_from_repr(repr);
+                                            let dst = if used_typed_arr {
+                                                let p = self.new_tmp();
+                                                let _ = writeln!(
+                                                    self.buf,
+                                                    "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
+                                                    p, n, alloca_name
+                                                );
+                                                p
+                                            } else {
+                                                alloca_name.clone()
+                                            };
+                                            let src = self.new_tmp();
+                                            let _ = writeln!(
+                                                self.buf,
+                                                "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
+                                                src, len, gname
+                                            );
+                                            self.add_decl("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+                                            let _ = writeln!(
+                                                self.buf,
+                                                "  call void @llvm.memcpy.p0.p0.i64(ptr {}, ptr {}, i64 {}, i1 false)",
+                                                dst, src, len
+                                            );
+                                        }
+                                    }
+                                    // int arrays with initializer list -> element stores
+                                    (_, Expr::InitList(items)) => {
+                                        if matches!(&**inner, Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Short | Type::UShort | Type::Enum(_) | Type::Named(_)) {
+                                            for (i, it) in items.iter().enumerate() {
+                                                if i >= *n { break; }
+                                                // element pointer
+                                                let eptr = if used_typed_arr {
+                                                    let p = self.new_tmp();
+                                                    let _ = writeln!(
+                                                        self.buf,
+                                                        "  {} = getelementptr inbounds [{} x i32], ptr {}, i64 0, i64 {}",
+                                                        p, n, alloca_name, i
+                                                    );
+                                                    p
+                                                } else {
+                                                    let off = (i as i64) * 4;
+                                                    let p = self.new_tmp();
+                                                    let _ = writeln!(
+                                                        self.buf,
+                                                        "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                                        p, alloca_name, off
+                                                    );
+                                                    p
+                                                };
+                                                // value
+                                                let vstr = if let Expr::IntLiteral(repr) = it {
+                                                    format!("{}", parse_int_repr(repr))
+                                                } else {
+                                                    let (vs, _vc) = self.emit_expr(it);
+                                                    vs
+                                                };
+                                                let _ = writeln!(self.buf, "  store i32 {}, ptr {}", vstr, eptr);
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
                             self.consts.remove(name);
                         }
                         Type::Pointer(inner) => {
@@ -2978,7 +3091,75 @@ impl Emitter {
                             self.locals.insert(name.clone(), alloca_name.clone());
                             self.locals_ty
                                 .insert(name.clone(), Type::Struct(tag.clone()));
-                            if let Some(_e) = init { /* aggregate init not supported yet */ }
+
+                            if let Some(e) = init {
+                                // Zero-fill struct
+                                self.add_decl("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)");
+                                let _ = writeln!(
+                                    self.buf,
+                                    "  call void @llvm.memset.p0.i64(ptr {}, i8 0, i64 {}, i1 false)",
+                                    alloca_name,
+                                    sz as i64
+                                );
+                                // Field stores for simple int and array-of-int fields from list
+                                if let Expr::InitList(items) = e {
+                                    if let Some(sl) = self.struct_layouts.get(tag) {
+                                        // order members by offset
+                                        let mut ordered: Vec<(usize, Type)> = sl
+                                            .members
+                                            .iter()
+                                            .map(|(_n, (off, ty))| (*off, ty.clone()))
+                                            .collect();
+                                        ordered.sort_by_key(|(o, _)| *o);
+                                        for (i, (off, fty)) in ordered.iter().enumerate() {
+                                            if i >= items.len() { break; }
+                                            let it = &items[i];
+                                            match fty {
+                                                // scalar int-like field
+                                                Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Short | Type::UShort | Type::Enum(_) | Type::Named(_) | Type::Char | Type::SChar | Type::UChar => {
+                                                    let fptr = self.new_tmp();
+                                                    let _ = writeln!(
+                                                        self.buf,
+                                                        "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                                        fptr, alloca_name, *off as i64
+                                                    );
+                                                    let vstr = if let Expr::IntLiteral(repr) = it {
+                                                        format!("{}", parse_int_repr(repr))
+                                                    } else {
+                                                        let (vs, _vc) = self.emit_expr(it);
+                                                        vs
+                                                    };
+                                                    let _ = writeln!(self.buf, "  store i32 {}, ptr {}", vstr, fptr);
+                                                }
+                                                // array-of-int field with nested initializer list
+                                                Type::Array(inner2, n2) if matches!(&**inner2, Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Short | Type::UShort | Type::Enum(_) | Type::Named(_)) => {
+                                                    if let Expr::InitList(vs) = it {
+                                                        let esz = self.sizeof_t_usize(&inner2) as i64; // 4 for int
+                                                        for (j, v) in vs.iter().enumerate() {
+                                                            if j >= *n2 { break; }
+                                                            let elem_off = (*off as i64) + (j as i64) * esz;
+                                                            let eptr = self.new_tmp();
+                                                            let _ = writeln!(
+                                                                self.buf,
+                                                                "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                                                                eptr, alloca_name, elem_off
+                                                            );
+                                                            let vstr = if let Expr::IntLiteral(repr) = v {
+                                                                format!("{}", parse_int_repr(repr))
+                                                            } else {
+                                                                let (vs, _vc) = self.emit_expr(v);
+                                                                vs
+                                                            };
+                                                            let _ = writeln!(self.buf, "  store i32 {}, ptr {}", vstr, eptr);
+                                                        }
+                                                    }
+                                                }
+                                                _ => { /* unsupported nested type for v1 */ }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             self.consts.remove(name);
                         }
                         Type::Union(tag) => {
@@ -2988,7 +3169,7 @@ impl Emitter {
                             self.locals.insert(name.clone(), alloca_name.clone());
                             self.locals_ty
                                 .insert(name.clone(), Type::Union(tag.clone()));
-                            if let Some(_e) = init { /* aggregate init not supported yet */ }
+                            if let Some(_e) = init { /* aggregate init limited in v1 */ }
                             self.consts.remove(name);
                         }
                         _ => {
@@ -3011,7 +3192,7 @@ impl Emitter {
                             }
                         }
                     }
-                }
+                    }
             }
             Stmt::Case { .. } => { /* handled within Switch lowering */ }
             Stmt::Default => { /* handled within Switch lowering */ }

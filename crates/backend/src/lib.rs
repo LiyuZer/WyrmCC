@@ -2959,13 +2959,19 @@ impl Emitter {
                                         Expr::StringLiteral(repr) => {
                                             let (sname, len) =
                                                 self.ensure_string_global_from_repr(repr);
-                                            format!("getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)", len, sname)
+                                            format!(
+                                                "getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)",
+                                                len, sname
+                                            )
                                         }
                                         Expr::Cast { expr, .. } => {
                                             if let Expr::StringLiteral(repr) = &**expr {
                                                 let (sname, len) =
                                                     self.ensure_string_global_from_repr(repr);
-                                                format!("getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)", len, sname)
+                                                format!(
+                                                    "getelementptr inbounds ([{} x i8], ptr {}, i64 0, i64 0)",
+                                                    len, sname
+                                                )
                                             } else {
                                                 "null".to_string()
                                             }
@@ -3000,20 +3006,54 @@ impl Emitter {
                     self.locals.insert(name.clone(), format!("@{}", gname));
                     self.locals_ty.insert(name.clone(), ty.clone());
                     self.consts.remove(name);
-                    } else {
+                } else {
                     match ty {
                         Type::Array(inner, n) => {
                             let alloca_name = format!("%{}", name);
-                            // Decide alloca type
+                            // Track if we allocated a typed array and, for i8 arrays, its length
                             let mut used_typed_arr = false;
+                            let mut typed_i8_len: Option<usize> = None;
+
+                            // Precompute effective char array length for unsized char[] initialized from a string literal
+                            if matches!(&**inner, Type::Char | Type::SChar | Type::UChar) {
+                                if *n == 0 {
+                                    if let Some(e) = init {
+                                        match e {
+                                            Expr::StringLiteral(repr) => {
+                                                typed_i8_len = Some(decode_c_string(repr).len());
+                                            }
+                                            Expr::Cast { expr: inner_e, .. } => {
+                                                if let Expr::StringLiteral(repr2) = &**inner_e {
+                                                    typed_i8_len = Some(decode_c_string(repr2).len());
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Decide alloca type
                             if let Some(arr_str) = self.llvm_int_array_type_str(ty) {
+                                // Typed nested int arrays
                                 let _ = writeln!(self.buf, "  {} = alloca {}", alloca_name, arr_str);
                                 used_typed_arr = true;
                             } else if matches!(&**inner, Type::Char | Type::SChar | Type::UChar) {
-                                // typed [N x i8] for sized char arrays
-                                let ty_str = format!("[{} x i8]", n);
-                                let _ = writeln!(self.buf, "  {} = alloca {}", alloca_name, ty_str);
-                                used_typed_arr = true;
+                                // typed [len x i8] for char arrays; for unsized + string init, infer len from literal
+                                let alloc_len: usize = if *n == 0 {
+                                    typed_i8_len.unwrap_or(0)
+                                } else {
+                                    *n
+                                };
+                                if alloc_len > 0 {
+                                    let ty_str = format!("[{} x i8]", alloc_len);
+                                    let _ = writeln!(self.buf, "  {} = alloca {}", alloca_name, ty_str);
+                                    used_typed_arr = true;
+                                    typed_i8_len = Some(alloc_len);
+                                } else {
+                                    let total_sz = self.sizeof_t_usize(ty);
+                                    let _ = writeln!(self.buf, "  {} = alloca i8, i64 {}", alloca_name, total_sz);
+                                }
                             } else {
                                 let total_sz = self.sizeof_t_usize(ty);
                                 let _ = writeln!(
@@ -3027,7 +3067,7 @@ impl Emitter {
 
                             // Initialization for local arrays
                             if let Some(e) = init {
-                                // Zero-fill entire aggregate first
+                                // Zero-fill entire aggregate first (best-effort if size is known from declared type)
                                 let total_sz = self.sizeof_t_usize(ty) as i64;
                                 self.add_decl("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)");
                                 let _ = writeln!(
@@ -3042,10 +3082,12 @@ impl Emitter {
                                         let (gname, len) = self.ensure_string_global_from_repr(repr);
                                         let dst = if used_typed_arr {
                                             let p = self.new_tmp();
+                                            // Use the actual typed length if we inferred it for unsized arrays, else declared n
+                                            let ty_len = typed_i8_len.unwrap_or(*n);
                                             let _ = writeln!(
                                                 self.buf,
                                                 "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
-                                                p, n, alloca_name
+                                                p, ty_len, alloca_name
                                             );
                                             p
                                         } else {
@@ -3069,10 +3111,11 @@ impl Emitter {
                                             let (gname, len) = self.ensure_string_global_from_repr(repr);
                                             let dst = if used_typed_arr {
                                                 let p = self.new_tmp();
+                                                let ty_len = typed_i8_len.unwrap_or(*n);
                                                 let _ = writeln!(
                                                     self.buf,
                                                     "  {} = getelementptr inbounds [{} x i8], ptr {}, i64 0, i64 0",
-                                                    p, n, alloca_name
+                                                    p, ty_len, alloca_name
                                                 );
                                                 p
                                             } else {
@@ -3256,7 +3299,7 @@ impl Emitter {
                             }
                         }
                     }
-                    }
+                }
             }
             Stmt::Case { .. } => { /* handled within Switch lowering */ }
             Stmt::Default => { /* handled within Switch lowering */ }
@@ -3290,6 +3333,7 @@ fn round_up(x: usize, align: usize) -> usize {
         x + (align - rem)
     }
 }
+
 fn parse_int_repr(repr: &str) -> i32 {
     let mut s = repr.trim();
     // strip simple integer suffixes (u/U/l/L)
@@ -3314,6 +3358,7 @@ fn parse_int_repr(repr: &str) -> i32 {
     let v = if neg { -v64 } else { v64 };
     v as i32
 }
+
 fn decode_c_string(repr: &str) -> Vec<u8> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut esc = false;
@@ -3388,7 +3433,6 @@ fn decode_c_string(repr: &str) -> Vec<u8> {
     bytes.push(0);
     bytes
 }
-
 fn llvm_escape_c_bytes(bytes: &[u8]) -> String {
     let mut s = String::new();
     for &b in bytes {

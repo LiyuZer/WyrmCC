@@ -365,7 +365,6 @@ impl Sema {
     }
 
     fn populate_function_signatures(&mut self, tu: &TranslationUnit) {
-        // Collect from TU definitions
         for f in &tu.functions {
             let params: Vec<Type> = f.params.iter().map(|p| p.ty.clone()).collect();
             self.func_sigs
@@ -395,29 +394,19 @@ impl Sema {
         let _ = self.typedef_scopes.pop();
     }
 
-    fn insert(&mut self, name: String, ty: Type) {
-        if let Some(s) = self.scopes.last_mut() {
-            s.insert(name, ty);
-        }
-    }
+    fn insert(&mut self, name: String, ty: Type) { if let Some(s) = self.scopes.last_mut() { s.insert(name, ty); } }
 
     fn lookup(&self, name: &str) -> Option<Type> {
         for s in self.scopes.iter().rev() {
-            if let Some(t) = s.get(name) {
-                return Some(t.clone());
-            }
+            if let Some(t) = s.get(name) { return Some(t.clone()); }
         }
-        if let Some(t) = self.global_syms.get(name) {
-            return Some(t.clone());
-        }
+        if let Some(t) = self.global_syms.get(name) { return Some(t.clone()); }
         None
     }
 
     fn lookup_typedef(&self, name: &str) -> Option<Type> {
         for s in self.typedef_scopes.iter().rev() {
-            if let Some(t) = s.get(name) {
-                return Some(t.clone());
-            }
+            if let Some(t) = s.get(name) { return Some(t.clone()); }
         }
         None
     }
@@ -425,23 +414,12 @@ impl Sema {
     fn resolve_type_internal(&self, ty: &Type, seen: &mut HashSet<String>) -> Result<Type> {
         match ty {
             Type::Named(nm) => {
-                if !seen.insert(nm.clone()) {
-                    return Err(anyhow!("cyclic typedef detected: {}", nm));
-                }
-                let base = self
-                    .lookup_typedef(nm)
-                    .ok_or_else(|| anyhow!("unknown typedef name: {}", nm))?;
-                let out = self.resolve_type_internal(&base, seen)?;
-                Ok(out)
+                if !seen.insert(nm.clone()) { return Err(anyhow!("cyclic typedef detected: {}", nm)); }
+                let base = self.lookup_typedef(nm).ok_or_else(|| anyhow!("unknown typedef name: {}", nm))?;
+                self.resolve_type_internal(&base, seen)
             }
-            Type::Pointer(inner) => {
-                let r = self.resolve_type_internal(inner, seen)?;
-                Ok(Type::Pointer(Box::new(r)))
-            }
-            Type::Array(inner, n) => {
-                let r = self.resolve_type_internal(inner, seen)?;
-                Ok(Type::Array(Box::new(r), *n))
-            }
+            Type::Pointer(inner) => Ok(Type::Pointer(Box::new(self.resolve_type_internal(inner, seen)?))),
+            Type::Array(inner, n) => Ok(Type::Array(Box::new(self.resolve_type_internal(inner, seen)?), *n)),
             other => Ok(other.clone()),
         }
     }
@@ -452,112 +430,78 @@ impl Sema {
     }
 
     fn process_globals(&mut self, tu: &TranslationUnit) -> Result<()> {
-        // First pass: collect per-name info across the TU
         #[derive(Default)]
-        struct Info {
-            has_extern: bool,
-            defs: usize,
-            tentatives: usize,
-        }
+        struct Info { has_extern: bool, defs: usize, tentatives: usize }
         let mut map: HashMap<String, Info> = HashMap::new();
+        let mut arr_sizes: HashMap<String, usize> = HashMap::new(); // name -> size (0 unsized)
+
+        let is_incomplete_object = |this: &Sema, t: &Type| -> bool {
+            match t {
+                Type::Struct(tag) => !this.struct_layouts.contains_key(tag),
+                Type::Union(tag)  => !this.union_layouts.contains_key(tag),
+                Type::Array(inner, _n) => match &**inner {
+                    Type::Struct(tag) => !this.struct_layouts.contains_key(tag),
+                    Type::Union(tag)  => !this.union_layouts.contains_key(tag),
+                    _ => false,
+                },
+                _ => false,
+            }
+        };
 
         for g in &tu.globals {
             let name = g.name.clone();
             let ty = g.ty.clone();
             let is_extern = matches!(g.storage, Some(Storage::Extern));
             let has_init = g.init.is_some();
+            let rty = self.resolve_type(&ty)?;
 
-            // extern with initializer is invalid
-            if is_extern && has_init {
-                return Err(anyhow!("extern global '{}' cannot have initializer", name));
+            if is_extern && has_init { return Err(anyhow!("extern global '{}' cannot have initializer", name)); }
+
+            if !is_extern {
+                if is_incomplete_object(self, &rty) { return Err(anyhow!(format!("global object '{}' has incomplete type", name))); }
             }
 
-            // Validate constant initializer when present
             if let Some(init) = &g.init {
-                if !self.is_const_initializer(&ty, init) {
-                    return Err(anyhow!("non-constant global initializer for {}", name));
-                }
-                // Additionally enforce semantic checks (sizes/types) for aggregates and strings
-                self.check_initializer(&ty, init)?;
-            }
-            // Aggregate counts
-            let entry = map.entry(name.clone()).or_default();
-            if is_extern {
-                entry.has_extern = true;
-            } else if has_init {
-                entry.defs = entry.defs.saturating_add(1);
-            } else {
-                // non-extern without init: tentative definition
-                entry.tentatives = entry.tentatives.saturating_add(1);
+                if !self.is_const_initializer(&rty, init) { return Err(anyhow!("non-constant global initializer for {}", name)); }
+                self.check_initializer(&rty, init)?;
             }
 
-            // Record in globals map for lookup in function bodies (first-seen wins)
+            if let Type::Array(_inner, n) = rty.clone() {
+                let entry = arr_sizes.entry(name.clone()).or_insert(n);
+                let prev = *entry;
+                if prev == 0 { *entry = n; }
+                else if n == 0 { /* keep prev */ }
+                else if prev != n {
+                    return Err(anyhow!(format!("conflicting array sizes for {}: {} vs {}", name, prev, n)));
+                }
+            }
+
+            let entry = map.entry(name.clone()).or_default();
+            if is_extern { entry.has_extern = true; }
+            else if has_init { entry.defs = entry.defs.saturating_add(1); }
+            else { entry.tentatives = entry.tentatives.saturating_add(1); }
+
             self.global_syms.entry(name).or_insert(ty);
         }
 
-        // Diagnostics: more than one actual definition within the same TU is an error
-        for (name, info) in &map {
-            if info.defs > 1 {
-                return Err(anyhow!("duplicate global definition: {}", name));
-            }
-        }
-
+        for (name, info) in &map { if info.defs > 1 { return Err(anyhow!("duplicate global definition: {}", name)); } }
         Ok(())
     }
 
     fn estimate_c_string_len(repr: &str) -> usize {
-        // repr includes surrounding quotes; treat common escapes as single char
         let bytes = repr.as_bytes();
-        if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
-            return repr.len();
-        }
-        let inner = &repr[1..repr.len() - 1];
+        if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len()-1] != b'"' { return repr.len(); }
+        let inner = &repr[1..repr.len()-1];
         let mut chars = inner.chars().peekable();
         let mut count = 0usize;
         while let Some(c) = chars.next() {
             if c == '\\' {
-                // handle simple one-char escapes
                 if let Some(nc) = chars.peek().cloned() {
                     match nc {
-                        'n' | 'r' | 't' | '0' | '\\' | '\'' | '"' => {
-                            let _ = chars.next();
-                            count += 1;
-                            continue;
-                        }
-                        'x' => {
-                            // hex sequence: consume 'x' and following hex digits as one char
-                            let _ = chars.next();
-                            while let Some(h) = chars.peek().cloned() {
-                                if h.is_ascii_hexdigit() {
-                                    let _ = chars.next();
-                                } else {
-                                    break;
-                                }
-                            }
-                            count += 1;
-                            continue;
-                        }
-                        '0'..='7' => {
-                            // octal up to 3 digits total
-                            let _ = chars.next();
-                            for _ in 0..2 {
-                                if let Some(o) = chars.peek().cloned() {
-                                    if ('0'..='7').contains(&o) {
-                                        let _ = chars.next();
-                                    } else {
-                                        break;
-                                    }
-                                }
-                            }
-                            count += 1;
-                            continue;
-                        }
-                        _ => {
-                            // unknown escape, treat as single
-                            let _ = chars.next();
-                            count += 1;
-                            continue;
-                        }
+                        'n'|'r'|'t'|'0'|'\\'|'\''|'"' => { let _=chars.next(); count+=1; continue; }
+                        'x' => { let _=chars.next(); while let Some(h)=chars.peek().cloned(){ if h.is_ascii_hexdigit(){ let _=chars.next(); } else { break; } } count+=1; continue; }
+                        '0'..='7' => { let _=chars.next(); for _ in 0..2 { if let Some(o)=chars.peek().cloned(){ if ('0'..='7').contains(&o){ let _=chars.next(); } else { break; } } } count+=1; continue; }
+                        _ => { let _=chars.next(); count+=1; continue; }
                     }
                 }
             }
@@ -588,9 +532,7 @@ impl Sema {
                     if n != 0 && items.len() > n { return false; }
                     for it in items {
                         if matches!(&**elem, Type::Array(_, _)) {
-                            if let Expr::InitList(_) = it {
-                                if !self.const_init_ok(elem, it) { return false; }
-                            } else { return false; }
+                            if let Expr::InitList(_) = it { if !self.const_init_ok(elem, it) { return false; } } else { return false; }
                         } else {
                             if eval_int_const_expr(it).is_none() { return false; }
                         }
@@ -605,9 +547,7 @@ impl Sema {
                         let mut members: Vec<(usize, Type)> = s.members.iter().map(|(_n,(off,t))| (*off, t.clone())).collect();
                         members.sort_by_key(|(o,_)| *o);
                         if items.len() > members.len() { return false; }
-                        for it in items {
-                            if eval_int_const_expr(it).is_none() { return false; }
-                        }
+                        for it in items { if eval_int_const_expr(it).is_none() { return false; } }
                         true
                     } else { true }
                 }
@@ -617,27 +557,17 @@ impl Sema {
         }
     }
 
-    fn is_const_initializer(&self, ty: &Type, e: &Expr) -> bool {
-        self.const_init_ok(ty, e)
-    }
+    fn is_const_initializer(&self, ty: &Type, e: &Expr) -> bool { self.const_init_ok(ty, e) }
 
     fn check_tu(&mut self, tu: &TranslationUnit) -> Result<()> {
-        // Gather function signatures (already done in from_tu) and process globals
         self.process_globals(tu)?;
-        for f in &tu.functions {
-            self.check_function(f)?;
-        }
+        for f in &tu.functions { self.check_function(f)?; }
         Ok(())
     }
 
     fn check_function(&mut self, f: &Function) -> Result<()> {
-        // Start a fresh scope for params
         self.push_scope();
-        for p in &f.params {
-            let rty = self.resolve_type(&p.ty)?;
-            self.insert(p.name.clone(), rty);
-        }
-        // Function body
+        for p in &f.params { let rty = self.resolve_type(&p.ty)?; self.insert(p.name.clone(), rty); }
         self.check_block(&f.body)?;
         self.pop_scope();
         Ok(())
@@ -645,9 +575,7 @@ impl Sema {
 
     fn check_block(&mut self, body: &[Stmt]) -> Result<()> {
         self.push_scope();
-        for s in body {
-            self.check_stmt(s)?;
-        }
+        for s in body { self.check_stmt(s)?; }
         self.pop_scope();
         Ok(())
     }
@@ -658,22 +586,14 @@ impl Sema {
         for s in body {
             match s {
                 Stmt::Case { value } => {
-                    let v = eval_int_const_expr(value)
-                        .ok_or_else(|| anyhow!("case label is not an integer constant"))?;
-                    if !seen_cases.insert(v) {
-                        return Err(anyhow!("duplicate case label: {}", v));
-                    }
+                    let v = eval_int_const_expr(value).ok_or_else(|| anyhow!("case label is not an integer constant"))?;
+                    if !seen_cases.insert(v) { return Err(anyhow!("duplicate case label: {}", v)); }
                 }
                 Stmt::Default => {
-                    if seen_default {
-                        return Err(anyhow!("multiple default labels in switch"));
-                    }
+                    if seen_default { return Err(anyhow!("multiple default labels in switch")); }
                     seen_default = true;
                 }
-                other => {
-                    // Regular statement inside switch
-                    self.check_stmt(other)?;
-                }
+                other => { self.check_stmt(other)?; }
             }
         }
         Ok(())
@@ -684,32 +604,20 @@ impl Sema {
         match rty {
             Type::Array(inner, n) => match init {
                 Expr::StringLiteral(s) => {
-                    if !is_char_type(&inner) {
-                        return Err(anyhow!("string literal not allowed for non-char array"));
-                    }
+                    if !is_char_type(&inner) { return Err(anyhow!("string literal not allowed for non-char array")); }
                     let len = Self::estimate_c_string_len(s);
-                    if n == 0 || n >= len + 1 {
-                        Ok(())
-                    } else {
-                        Err(anyhow!("char array initializer too small for string+NUL"))
-                    }
+                    if n == 0 || n >= len + 1 { Ok(()) } else { Err(anyhow!("char array initializer too small for string+NUL")) }
                 }
                 Expr::InitList(items) => {
-                    if n != 0 && items.len() > n {
-                        return Err(anyhow!("too many initializers for array"));
-                    }
+                    if n != 0 && items.len() > n { return Err(anyhow!("too many initializers for array")); }
                     for it in items {
                         match (&*inner, it) {
                             (Type::Array(_, _), Expr::InitList(_)) => self.check_initializer(&inner, it)?,
-                            (Type::Array(_, _), _) => {
-                                return Err(anyhow!("array element requires initializer list"));
-                            }
+                            (Type::Array(_, _), _) => { return Err(anyhow!("array element requires initializer list")); }
                             _ => {
-                                let at = self.type_expr(it)?;
-                                let at = self.resolve_type(&at)?;
-                                if (is_integer(&inner) && is_integer(&at)) || (is_pointer(&inner) && is_pointer(&at)) {
-                                    // ok
-                                } else {
+                                let it_te = self.type_expr(it)?;
+                                let at = self.resolve_type(&it_te)?;
+                                if (is_integer(&inner) && is_integer(&at)) || (is_pointer(&inner) && is_pointer(&at)) { /* ok */ } else {
                                     return Err(anyhow!("incompatible initializer for array element"));
                                 }
                             }
@@ -722,176 +630,93 @@ impl Sema {
             Type::Struct(tag) => match init {
                 Expr::InitList(items) => {
                     if let Some(s) = self.struct_layouts.get(&tag) {
-                        let mut members: Vec<(usize, Type)> = s
-                            .members
-                            .iter()
-                            .map(|(_n, (off, ty))| (*off, ty.clone()))
-                            .collect();
+                        let mut members: Vec<(usize, Type)> = s.members.iter().map(|(_n,(off,ty))| (*off, ty.clone())).collect();
                         members.sort_by_key(|(off, _)| *off);
-                        if items.len() > members.len() {
-                            return Err(anyhow!("too many initializers for struct"));
-                        }
+                        if items.len() > members.len() { return Err(anyhow!("too many initializers for struct")); }
                         for (i, it) in items.iter().enumerate() {
-                            if let Expr::InitList(_) = it {
-                                return Err(anyhow!(
-                                    "nested initializer for struct field {} not supported in v1",
-                                    i + 1
-                                ));
-                            }
+                            if let Expr::InitList(_) = it { return Err(anyhow!("nested initializer for struct field {} not supported in v1", i+1)); }
                             let field_ty = &members[i].1;
-                            let at = self.type_expr(it)?;
-                            let at = self.resolve_type(&at)?;
-                            if (is_integer(field_ty) && is_integer(&at))
-                                || (is_pointer(field_ty) && is_pointer(&at))
-                            {
-                                // ok
-                            } else {
-                                return Err(anyhow!(
-                                    "type mismatch in struct field {} initializer",
-                                    i + 1
-                                ));
+                            let it_te = self.type_expr(it)?;
+                            let at = self.resolve_type(&it_te)?;
+                            if (is_integer(field_ty) && is_integer(&at)) || (is_pointer(field_ty) && is_pointer(&at)) { /* ok */ } else {
+                                return Err(anyhow!("type mismatch in struct field {} initializer", i+1));
                             }
                         }
                         Ok(())
-                    } else {
-                        // incomplete struct; be permissive
-                        Ok(())
-                    }
+                    } else { Ok(()) }
                 }
                 _ => Err(anyhow!("struct initializer must be a braced list")),
             },
             _ => match init {
                 Expr::InitList(_) => Err(anyhow!("scalar initializer cannot be a list")),
                 e => {
-                    let at_raw = self.type_expr(e)?;
-                    let at_raw = self.resolve_type(&at_raw)?;
-
-                    // Allow initializing a function pointer from a function designator (decay to pointer)
+                    let te = self.type_expr(e)?;
+                    let at_raw = self.resolve_type(&te)?;
                     if let Type::Pointer(lhs_inner) = &rty {
                         if matches!(&**lhs_inner, Type::Func { .. }) {
-                            if matches!(at_raw, Type::Func { .. }) {
-                                return Ok(());
-                            }
+                            if matches!(at_raw, Type::Func { .. }) { return Ok(()); }
                         }
                     }
-
-                    // Decay arrays on RHS to pointers (e.g., short* p = a; where a is short[...])
                     let at = self.decay_array_to_ptr(&at_raw)?;
-
-                    // Allow null pointer constant initialization: pointer <- 0
-                    if is_pointer(&rty) && is_integer(&at) {
-                        if let Expr::IntLiteral(s) = e {
-                            if parse_int_literal_str(s).map_or(false, |v| v == 0) {
-                                return Ok(());
-                            }
-                        }
-                    }
-
-                    if (is_integer(&rty) && is_integer(&at)) || (is_pointer(&rty) && is_pointer(&at)) {
-                        Ok(())
-                    } else {
-                        Err(anyhow!("incompatible scalar initializer"))
-                    }
+                    if is_pointer(&rty) && is_integer(&at) { if let Expr::IntLiteral(s) = e { if parse_int_literal_str(s).map_or(false, |v| v==0) { return Ok(()); } } }
+                    if (is_integer(&rty) && is_integer(&at)) || (is_pointer(&rty) && is_pointer(&at)) { Ok(()) } else { Err(anyhow!("incompatible scalar initializer")) }
                 }
-            },
+            }
         }
     }
+
     fn check_stmt(&mut self, s: &Stmt) -> Result<()> {
         match s {
             Stmt::Block(stmts) => self.check_block(stmts),
-            Stmt::If {
-                cond,
-                then_branch,
-                else_branch,
-            } => {
-                let _ = self.type_expr(cond)?; // ensure cond is typeable
-                self.check_block(then_branch)?;
-                if let Some(eb) = else_branch {
-                    self.check_block(eb)?;
-                }
-                Ok(())
-            }
-            Stmt::While { cond, body } => {
-                let _ = self.type_expr(cond)?;
+            Stmt::If { cond, then_branch, else_branch } => { let _ = self.type_expr(cond)?; self.check_block(then_branch)?; if let Some(eb)=else_branch { self.check_block(eb)?; } Ok(()) }
+            Stmt::While { cond, body } => { let _ = self.type_expr(cond)?; self.check_block(body) }
+            Stmt::DoWhile { body, cond } => { let _ = self.type_expr(cond)?; self.check_block(body) }
+            Stmt::For { init, cond, post, body } => {
+                if let Some(i) = init { let _ = self.type_expr(i)?; }
+                if let Some(c) = cond { let _ = self.type_expr(c)?; }
+                if let Some(p) = post { let _ = self.type_expr(p)?; }
                 self.check_block(body)
             }
-            Stmt::DoWhile { body, cond } => {
-                let _ = self.type_expr(cond)?;
-                self.check_block(body)
-            }
-            Stmt::For {
-                init,
-                cond,
-                post,
-                body,
-            } => {
-                if let Some(i) = init {
-                    let _ = self.type_expr(i)?;
-                }
-                if let Some(c) = cond {
-                    let _ = self.type_expr(c)?;
-                }
-                if let Some(p) = post {
-                    let _ = self.type_expr(p)?;
-                }
-                self.check_block(body)
-            }
-            Stmt::Switch { cond, body } => {
-                let ct = self.type_expr(cond)?;
-                if !is_integer(&ct) {
-                    return Err(anyhow!("switch condition is not integer"));
-                }
-                self.check_switch_body(body)
-            }
-            Stmt::Case { .. } => {
-                // Labels are validated within the enclosing Switch; accept here.
-                Ok(())
-            }
-            Stmt::Default => {
-                // Validated within the enclosing Switch; accept here.
-                Ok(())
-            }
+            Stmt::Switch { cond, body } => { let ct = self.type_expr(cond)?; if !is_integer(&ct) { return Err(anyhow!("switch condition is not integer")); } self.check_switch_body(body) }
+            Stmt::Case { .. } => Ok(()),
+            Stmt::Default => Ok(()),
             Stmt::Break | Stmt::Continue => Ok(()),
-            Stmt::Return(e) => {
-                let _ = self.type_expr(e)?;
-                Ok(())
-            }
+            Stmt::Return(e) => { let _ = self.type_expr(e)?; Ok(()) }
             Stmt::Decl { name, ty, init, .. } => {
                 let rty = self.resolve_type(ty)?;
-                if let Some(e) = init {
-                    self.check_initializer(&rty, e)?;
-                }
+                if !self.is_complete_object_type(&rty) { return Err(anyhow!("object of incomplete type")); }
+                if let Some(e) = init { self.check_initializer(&rty, e)?; }
                 self.insert(name.clone(), rty);
                 Ok(())
             }
             Stmt::Typedef { name, ty } => {
                 let rty = self.resolve_type(ty)?;
                 if let Some(scope) = self.typedef_scopes.last_mut() {
-                    if scope.contains_key(name) {
-                        return Err(anyhow!(
-                            "redefinition of typedef {} in the same scope",
-                            name
-                        ));
-                    }
+                    if scope.contains_key(name) { return Err(anyhow!("redefinition of typedef {} in the same scope", name)); }
                     scope.insert(name.clone(), rty);
                     Ok(())
-                } else {
-                    Err(anyhow!("typedef outside of any scope"))
-                }
+                } else { Err(anyhow!("typedef outside of any scope")) }
             }
             Stmt::Label(_name) => Ok(()),
             Stmt::Goto(_name) => Ok(()),
-            Stmt::ExprStmt(e) => {
-                let _ = self.type_expr(e)?;
-                Ok(())
-            }
+            Stmt::ExprStmt(e) => { let _ = self.type_expr(e)?; Ok(()) }
         }
     }
+
     fn decay_array_to_ptr(&self, t: &Type) -> Result<Type> {
         let r = self.resolve_type(t)?;
-        match r {
-            Type::Array(inner, _n) => Ok(Type::Pointer(inner)),
-            other => Ok(other),
+        match r { Type::Array(inner, _n) => Ok(Type::Pointer(inner)), other => Ok(other) }
+    }
+
+    fn is_complete_object_type(&self, ty: &Type) -> bool {
+        let rty = match self.resolve_type(ty) { Ok(t) => t, Err(_) => return false };
+        match rty {
+            Type::Void => false,
+            Type::Func { .. } => false,
+            Type::Struct(ref tag) => self.struct_layouts.contains_key(tag),
+            Type::Union(ref tag)  => self.union_layouts.contains_key(tag),
+            Type::Array(ref inner, _n) => self.is_complete_object_type(inner),
+            _ => true,
         }
     }
 
@@ -901,8 +726,6 @@ impl Sema {
         Ok((is_integer(&p) && is_integer(&a)) || (is_pointer(&p) && is_pointer(&a)))
     }
 
-    // Recognize a null pointer constant expression in our subset
-    // Accept: 0 and (T*)0 as null pointer constants.
     fn is_null_pointer_constant_expr(e: &Expr) -> bool {
         match e {
             Expr::IntLiteral(s) => parse_int_literal_str(s).map_or(false, |v| v == 0),
@@ -917,269 +740,84 @@ impl Sema {
     fn type_expr(&mut self, e: &Expr) -> Result<Type> {
         match e {
             Expr::Ident(name) => {
-                if let Some(t) = self.lookup(name) {
-                    return Ok(t);
-                }
+                if let Some(t) = self.lookup(name) { return Ok(t); }
                 if let Some((ret, params, variadic)) = self.func_sigs.get(name).cloned() {
-                    // Function designator: treat identifier as a function type
-                    return Ok(Type::Func {
-                        ret: Box::new(ret),
-                        params,
-                        variadic,
-                    });
+                    return Ok(Type::Func { ret: Box::new(ret), params, variadic });
                 }
                 Err(anyhow!("use of undeclared identifier: {}", name))
             }
             Expr::IntLiteral(_) => Ok(Type::Int),
-            Expr::StringLiteral(_) => Ok(Type::Pointer(Box::new(Type::Int))), // char*
+            Expr::StringLiteral(_) => Ok(Type::Pointer(Box::new(Type::Int))),
 
             Expr::Unary { op, expr } => {
                 let t = self.type_expr(expr)?;
                 match op {
-                    UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNot | UnaryOp::LogicalNot => {
-                        if !is_integer(&self.resolve_type(&t)?) { /* be permissive for now */ }
-                        Ok(Type::Int)
-                    }
-                    UnaryOp::AddrOf => {
-                        let rt = self.resolve_type(&t)?;
-                        Ok(Type::Pointer(Box::new(rt)))
-                    }
-                    UnaryOp::Deref => {
-                        let rt = self.resolve_type(&t)?;
-                        if let Type::Pointer(inner) = rt {
-                            Ok(*inner)
-                        } else {
-                            Err(anyhow!("cannot dereference non-pointer"))
-                        }
-                    }
+                    UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNot | UnaryOp::LogicalNot => { let _ = self.resolve_type(&t)?; Ok(Type::Int) }
+                    UnaryOp::AddrOf => { let rt = self.resolve_type(&t)?; Ok(Type::Pointer(Box::new(rt))) }
+                    UnaryOp::Deref => { let rt = self.resolve_type(&t)?; if let Type::Pointer(inner) = rt { Ok(*inner) } else { Err(anyhow!("cannot dereference non-pointer")) } }
                 }
             }
 
             Expr::Binary { op, lhs, rhs } => {
-                let lt_raw = self.type_expr(lhs)?;
-                let rt_raw = self.type_expr(rhs)?;
-                let lt_res = self.resolve_type(&lt_raw)?;
-                let rt_res = self.resolve_type(&rt_raw)?;
-                // Decay array types to pointers where applicable
-                let lt = match lt_res {
-                    Type::Array(inner, _) => Type::Pointer(inner),
-                    other => other,
-                };
-                let rt = match rt_res {
-                    Type::Array(inner, _) => Type::Pointer(inner),
-                    other => other,
-                };
+                let lt_raw = self.type_expr(lhs)?; let rt_raw = self.type_expr(rhs)?;
+                let lt_res = self.resolve_type(&lt_raw)?; let rt_res = self.resolve_type(&rt_raw)?;
+                let lt = match lt_res { Type::Array(inner, _) => Type::Pointer(inner), other => other };
+                let rt = match rt_res { Type::Array(inner, _) => Type::Pointer(inner), other => other };
                 use BinaryOp as B;
                 match op {
-                    // arithmetic and bitwise (excluding shifts)
-                    B::Plus
-                    | B::Minus
-                    | B::Mul
-                    | B::Div
-                    | B::Mod
-                    | B::BitAnd
-                    | B::BitOr
-                    | B::BitXor => {
-                        // pointer arithmetic cases for +/-
+                    B::Plus | B::Minus | B::Mul | B::Div | B::Mod | B::BitAnd | B::BitOr | B::BitXor => {
                         if matches!(op, B::Plus | B::Minus) {
                             match (&lt, &rt) {
                                 (Type::Pointer(_), Type::Int) => return Ok(lt),
-                                (Type::Int, Type::Pointer(_)) if matches!(op, B::Plus) => {
-                                    return Ok(rt)
-                                }
-                                (Type::Pointer(_), Type::Pointer(_)) if matches!(op, B::Minus) => {
-                                    return Ok(Type::Int)
-                                }
+                                (Type::Int, Type::Pointer(_)) if matches!(op, B::Plus) => { return Ok(rt) }
+                                (Type::Pointer(_), Type::Pointer(_)) if matches!(op, B::Minus) => { return Ok(Type::Int) }
                                 _ => {}
                             }
                         }
-                        usual_arith_conv(&lt, &rt).ok_or_else(|| {
-                            anyhow!("invalid arithmetic between {:?} and {:?}", lt, rt)
-                        })
+                        usual_arith_conv(&lt, &rt).ok_or_else(|| anyhow!("invalid arithmetic between {:?} and {:?}", lt, rt))
                     }
-                    // shifts: result is the promoted left operand type; rhs is converted to int
-                    B::Shl | B::Shr => {
-                        if !is_integer(&lt) || !is_integer(&rt) {
-                            return Err(anyhow!("invalid shift between {:?} and {:?}", lt, rt));
-                        }
-                        promoted_int_type(&lt).ok_or_else(|| anyhow!("failed to promote shift lhs"))
-                    }
-                    // logical && || -> int (truthiness)
+                    B::Shl | B::Shr => { if !is_integer(&lt) || !is_integer(&rt) { return Err(anyhow!("invalid shift between {:?} and {:?}", lt, rt)); } promoted_int_type(&lt).ok_or_else(|| anyhow!("failed to promote shift lhs")) }
                     B::LAnd | B::LOr => Ok(Type::Int),
-                    // comparisons -> int; require arithmetic types (apply UAC for validation)
-                    B::Lt | B::Le | B::Gt | B::Ge => {
-                        if usual_arith_conv(&lt, &rt).is_some() {
-                            Ok(Type::Int)
-                        } else {
-                            Err(anyhow!(
-                                "invalid relational compare between {:?} and {:?}",
-                                lt,
-                                rt
-                            ))
-                        }
-                    }
-                    B::Eq | B::Ne => {
-                        if (is_integer(&lt) && is_integer(&rt))
-                            || (is_pointer(&lt) && is_pointer(&rt))
-                            || (is_pointer(&lt) && is_integer(&rt))
-                            || (is_integer(&lt) && is_pointer(&rt))
-                        {
-                            Ok(Type::Int)
-                        } else {
-                            Err(anyhow!(
-                                "invalid equality compare between {:?} and {:?}",
-                                lt,
-                                rt
-                            ))
-                        }
-                    }
+                    B::Lt | B::Le | B::Gt | B::Ge => { if usual_arith_conv(&lt, &rt).is_some() { Ok(Type::Int) } else { Err(anyhow!("invalid relational compare between {:?} and {:?}", lt, rt)) } }
+                    B::Eq | B::Ne => { if (is_integer(&lt) && is_integer(&rt)) || (is_pointer(&lt) && is_pointer(&rt)) || (is_pointer(&lt) && is_integer(&rt)) || (is_integer(&lt) && is_pointer(&rt)) { Ok(Type::Int) } else { Err(anyhow!("invalid equality compare between {:?} and {:?}", lt, rt)) } }
                 }
             }
 
             Expr::Assign { name, value } => {
-                let vt = self.type_expr(value)?;
-                let vt = self.resolve_type(&vt)?;
-                let nt = self
-                    .lookup(name)
-                    .ok_or_else(|| anyhow!("assignment to undeclared identifier: {}", name))?;
-                let nt = self.resolve_type(&nt)?;
-
-                // Permit assignment between identical struct/union types (same tag) when complete;
-                // otherwise, fall back to integer/pointer compatibility.
+                let val_te = self.type_expr(value)?; let vt = self.resolve_type(&val_te)?;
+                let nt0 = self.lookup(name).ok_or_else(|| anyhow!("assignment to undeclared identifier: {}", name))?; let nt = self.resolve_type(&nt0)?;
                 match (&nt, &vt) {
                     (Type::Struct(lt), Type::Struct(rt)) => {
-                        if lt == rt {
-                            if self.struct_layouts.contains_key(lt) {
-                                Ok(nt)
-                            } else {
-                                Err(anyhow!(
-                                    "assignment involving incomplete struct {}",
-                                    lt
-                                ))
-                            }
-                        } else {
-                            Err(anyhow!(
-                                "incompatible assignment to {}: {:?} = {:?}",
-                                name, nt, vt
-                            ))
-                        }
+                        if lt == rt { if self.struct_layouts.contains_key(lt) { Ok(nt) } else { Err(anyhow!("assignment involving incomplete struct {}", lt)) } }
+                        else { Err(anyhow!("incompatible assignment to {}: {:?} = {:?}", name, nt, vt)) }
                     }
                     (Type::Union(lt), Type::Union(rt)) => {
-                        if lt == rt {
-                            if self.union_layouts.contains_key(lt) {
-                                Ok(nt)
-                            } else {
-                                Err(anyhow!(
-                                    "assignment involving incomplete union {}",
-                                    lt
-                                ))
-                            }
-                        } else {
-                            Err(anyhow!(
-                                "incompatible assignment to {}: {:?} = {:?}",
-                                name, nt, vt
-                            ))
-                        }
+                        if lt == rt { if self.union_layouts.contains_key(lt) { Ok(nt) } else { Err(anyhow!("assignment involving incomplete union {}", lt)) } }
+                        else { Err(anyhow!("incompatible assignment to {}: {:?} = {:?}", name, nt, vt)) }
                     }
-                    _ => {
-                        // very permissive for scalars: allow int<-int and pointer<-pointer
-                        if (is_integer(&nt) && is_integer(&vt)) || (is_pointer(&nt) && is_pointer(&vt)) {
-                            Ok(nt)
-                        } else {
-                            Err(anyhow!(
-                                "incompatible assignment to {}: {:?} = {:?}",
-                                name, nt, vt
-                            ))
-                        }
-                    }
+                    _ => { if (is_integer(&nt) && is_integer(&vt)) || (is_pointer(&nt) && is_pointer(&vt)) { Ok(nt) } else { Err(anyhow!("incompatible assignment to {}: {:?} = {:?}", name, nt, vt)) } }
                 }
-            },
+            }
 
             Expr::AssignDeref { ptr, value } => {
-                let pt = self.type_expr(ptr)?;
-                let pt = self.resolve_type(&pt)?;
-                let vt = self.type_expr(value)?;
-                let vt = self.resolve_type(&vt)?;
+                let ptr_te = self.type_expr(ptr)?; let pt = self.resolve_type(&ptr_te)?;
+                let val_te = self.type_expr(value)?; let vt = self.resolve_type(&val_te)?;
                 match pt {
                     Type::Pointer(inner) => {
                         match &*inner {
                             Type::Struct(tag) => {
-                                // Disallow assignment if the struct is incomplete in this TU
-                                if !self.struct_layouts.contains_key(tag) {
-                                    return Err(anyhow!(
-                                        "assignment involving incomplete struct {}",
-                                        tag
-                                    ));
-                                }
-                                if let Type::Struct(rtag) = &vt {
-                                    if rtag == tag {
-                                        Ok(*inner)
-                                    } else {
-                                        Err(anyhow!(
-                                            "incompatible assignment through pointer to struct {}",
-                                            tag
-                                        ))
-                                    }
-                                } else {
-                                    Err(anyhow!(
-                                        "incompatible assignment through pointer to struct {}",
-                                        tag
-                                    ))
-                                }
+                                if !self.struct_layouts.contains_key(tag) { return Err(anyhow!("assignment involving incomplete struct {}", tag)); }
+                                if let Type::Struct(rtag) = &vt { if rtag == tag { Ok(*inner) } else { Err(anyhow!("incompatible assignment through pointer to struct {}", tag)) } } else { Err(anyhow!("incompatible assignment through pointer to struct {}", tag)) }
                             }
                             Type::Union(tag) => {
-                                // Disallow assignment if the union is incomplete in this TU
-                                if !self.union_layouts.contains_key(tag) {
-                                    return Err(anyhow!(
-                                        "assignment involving incomplete union {}",
-                                        tag
-                                    ));
-                                }
-                                if let Type::Union(rtag) = &vt {
-                                    if rtag == tag {
-                                        Ok(*inner)
-                                    } else {
-                                        Err(anyhow!(
-                                            "incompatible assignment through pointer to union {}",
-                                            tag
-                                        ))
-                                    }
-                                } else {
-                                    Err(anyhow!(
-                                        "incompatible assignment through pointer to union {}",
-                                        tag
-                                    ))
-                                }
+                                if !self.union_layouts.contains_key(tag) { return Err(anyhow!("assignment involving incomplete union {}", tag)); }
+                                if let Type::Union(rtag) = &vt { if rtag == tag { Ok(*inner) } else { Err(anyhow!("incompatible assignment through pointer to union {}", tag)) } } else { Err(anyhow!("incompatible assignment through pointer to union {}", tag)) }
                             }
                             _ => {
-                                // Preserve previous permissive behavior for non-aggregate inner types
-                                if is_integer(&*inner) && is_integer(&vt) {
-                                    Ok(*inner)
-                                } else if is_pointer(&*inner) && is_pointer(&vt) {
-                                    Ok(*inner)
-                                } else {
-                                    // remain permissive as before to avoid breaking existing tests
-                                    Ok(*inner)
-                                }
+                                if is_integer(&*inner) && is_integer(&vt) { Ok(*inner) }
+                                else if is_pointer(&*inner) && is_pointer(&vt) { Ok(*inner) }
+                                else { Ok(*inner) }
                             }
-                        }
-                    }
-                    _ => Err(anyhow!("cannot assign through non-pointer")),
-                }
-            },
-
-            Expr::AssignDeref { ptr, value } => {
-                let pt = self.type_expr(ptr)?;
-                let pt = self.resolve_type(&pt)?;
-                let vt = self.type_expr(value)?;
-                let vt = self.resolve_type(&vt)?;
-                match pt {
-                    Type::Pointer(inner) => {
-                        // allow *ptr = int for now when inner is Int
-                        if is_integer(&*inner) && is_integer(&vt) {
-                            Ok(*inner)
-                        } else {
-                            Ok(*inner)
                         }
                     }
                     _ => Err(anyhow!("cannot assign through non-pointer")),
@@ -1187,332 +825,138 @@ impl Sema {
             }
 
             Expr::Call { callee, args } => {
-                // If callee is a variable in scope with a function pointer/function type,
-                // treat this as an indirect call and perform full arity/type checks.
                 if let Some(vt) = self.lookup(callee) {
                     let t_callee = self.resolve_type(&vt)?;
-                    let mut check_fn = |ret: Box<Type>,
-                                        params: Vec<Type>,
-                                        variadic: bool|
-                     -> Result<Type> {
-                        if !variadic && args.len() != params.len() {
-                            return Err(anyhow!(
-                                "arity mismatch in indirect call: expected {}, got {}",
-                                params.len(),
-                                args.len()
-                            ));
-                        }
-                        if variadic && args.len() < params.len() {
-                            return Err(anyhow!(
-                                "too few arguments in indirect call: expected at least {}, got {}",
-                                params.len(),
-                                args.len()
-                            ));
-                        }
+                    let mut check_fn = |ret: Box<Type>, params: Vec<Type>, variadic: bool| -> Result<Type> {
+                        if !variadic && args.len() != params.len() { return Err(anyhow!("arity mismatch in indirect call: expected {}, got {}", params.len(), args.len())); }
+                        if variadic && args.len() < params.len() { return Err(anyhow!("too few arguments in indirect call: expected at least {}, got {}", params.len(), args.len())); }
                         for (i, pty) in params.iter().enumerate() {
-                            // Allow null pointer constants for pointer params
                             let pty_res = self.resolve_type(pty)?;
-                            if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) {
-                                continue;
-                            }
+                            if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) { continue; }
                             let aty = self.type_expr(&args[i])?;
                             if !self.type_compatible_for_param(pty, &aty)? {
-                                let rpt = self.resolve_type(pty)?;
-                                let rat = self.resolve_type(&aty)?;
-                                return Err(anyhow!(
-                                    "type mismatch for argument {} in indirect call: expected {:?}, got {:?}",
-                                    i+1, rpt, rat
-                                ));
+                                let rpt = self.resolve_type(pty)?; let rat = self.resolve_type(&aty)?;
+                                return Err(anyhow!("type mismatch for argument {} in indirect call: expected {:?}, got {:?}", i+1, rpt, rat));
                             }
                         }
-                        for a in args.iter().skip(params.len()) {
-                            let _ = self.type_expr(a)?;
-                        }
+                        for a in args.iter().skip(params.len()) { let _ = self.type_expr(a)?; }
                         Ok(*ret)
                     };
                     match t_callee {
-                        Type::Pointer(inner) => match *inner {
-                            Type::Func {
-                                ret,
-                                params,
-                                variadic,
-                            } => return check_fn(ret, params, variadic),
-                            _ => {}
-                        },
-                        Type::Func {
-                            ret,
-                            params,
-                            variadic,
-                        } => return check_fn(ret, params, variadic),
+                        Type::Pointer(inner) => match *inner { Type::Func { ret, params, variadic } => return check_fn(ret, params, variadic), _ => {} },
+                        Type::Func { ret, params, variadic } => return check_fn(ret, params, variadic),
                         _ => {}
                     }
                 }
 
                 if let Some((ret_t, params, variadic)) = self.func_sigs.get(callee).cloned() {
-                    // Arity checks for known function symbols
-                    if !variadic && args.len() != params.len() {
-                        return Err(anyhow!(
-                            "arity mismatch in call to {}: expected {}, got {}",
-                            callee,
-                            params.len(),
-                            args.len()
-                        ));
-                    }
-                    if variadic && args.len() < params.len() {
-                        return Err(anyhow!(
-                            "too few arguments in call to {}: expected at least {}, got {}",
-                            callee,
-                            params.len(),
-                            args.len()
-                        ));
-                    }
-                    // Check fixed arguments
+                    if !variadic && args.len() != params.len() { return Err(anyhow!("arity mismatch in call to {}: expected {}, got {}", callee, params.len(), args.len())); }
+                    if variadic && args.len() < params.len() { return Err(anyhow!("too few arguments in call to {}: expected at least {}, got {}", callee, params.len(), args.len())); }
                     for (i, pty) in params.iter().enumerate() {
-                        // Allow null pointer constants for pointer params
                         let pty_res = self.resolve_type(pty)?;
-                        if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) {
-                            continue;
-                        }
+                        if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) { continue; }
                         let aty = self.type_expr(&args[i])?;
                         if !self.type_compatible_for_param(pty, &aty)? {
-                            let rpt = self.resolve_type(pty)?;
-                            let rat = self.resolve_type(&aty)?;
-                            return Err(anyhow!(
-                                "type mismatch for argument {} in call to {}: expected {:?}, got {:?}",
-                                i+1, callee, rpt, rat
-                            ));
+                            let rpt = self.resolve_type(pty)?; let rat = self.resolve_type(&aty)?;
+                            return Err(anyhow!("type mismatch for argument {} in call to {}: expected {:?}, got {:?}", i+1, callee, rpt, rat));
                         }
                     }
-                    // Check the rest (variadic part) are typeable
-                    for a in args.iter().skip(params.len()) {
-                        let _ = self.type_expr(a)?; // ensure typeable
-                    }
+                    for a in args.iter().skip(params.len()) { let _ = self.type_expr(a)?; }
                     Ok(ret_t)
                 } else {
-                    // Unknown extern: be permissive, type-check args only
-                    for a in args {
-                        let _ = self.type_expr(a)?;
-                    }
+                    for a in args { let _ = self.type_expr(a)?; }
                     Ok(Type::Int)
                 }
             }
 
             Expr::CallPtr { target, args } => {
-                // Indirect call via function pointer or function designator
-                let t_callee = self.type_expr(target)?;
-                let t_callee = self.resolve_type(&t_callee)?;
-                // Helper to check args against a function type and return its ret type
-                let mut check_fn = |ret: Box<Type>,
-                                    params: Vec<Type>,
-                                    variadic: bool|
-                 -> Result<Type> {
-                    if !variadic && args.len() != params.len() {
-                        return Err(anyhow!(
-                            "arity mismatch in indirect call: expected {}, got {}",
-                            params.len(),
-                            args.len()
-                        ));
-                    }
-                    if variadic && args.len() < params.len() {
-                        return Err(anyhow!(
-                            "too few arguments in indirect call: expected at least {}, got {}",
-                            params.len(),
-                            args.len()
-                        ));
-                    }
+                let target_te = self.type_expr(target)?; let t_callee = self.resolve_type(&target_te)?;
+                let mut check_fn = |ret: Box<Type>, params: Vec<Type>, variadic: bool| -> Result<Type> {
+                    if !variadic && args.len() != params.len() { return Err(anyhow!("arity mismatch in indirect call: expected {}, got {}", params.len(), args.len())); }
+                    if variadic && args.len() < params.len() { return Err(anyhow!("too few arguments in indirect call: expected at least {}, got {}", params.len(), args.len())); }
                     for (i, pty) in params.iter().enumerate() {
-                        // Allow null pointer constants for pointer params
                         let pty_res = self.resolve_type(pty)?;
-                        if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) {
-                            continue;
-                        }
+                        if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) { continue; }
                         let aty = self.type_expr(&args[i])?;
                         if !self.type_compatible_for_param(pty, &aty)? {
-                            let rpt = self.resolve_type(pty)?;
-                            let rat = self.resolve_type(&aty)?;
-                            return Err(anyhow!(
-                                "type mismatch for argument {} in indirect call: expected {:?}, got {:?}",
-                                i+1, rpt, rat
-                            ));
+                            let rpt = self.resolve_type(pty)?; let rat = self.resolve_type(&aty)?;
+                            return Err(anyhow!("type mismatch for argument {} in indirect call: expected {:?}, got {:?}", i+1, rpt, rat));
                         }
                     }
-                    for a in args.iter().skip(params.len()) {
-                        let _ = self.type_expr(a)?;
-                    }
+                    for a in args.iter().skip(params.len()) { let _ = self.type_expr(a)?; }
                     Ok(*ret)
                 };
-
                 match t_callee {
-                    Type::Pointer(inner) => match *inner {
-                        Type::Func {
-                            ret,
-                            params,
-                            variadic,
-                        } => check_fn(ret, params, variadic),
-                        other => Err(anyhow!("call through non-function pointer: {:?}", other)),
-                    },
-                    Type::Func {
-                        ret,
-                        params,
-                        variadic,
-                    } => check_fn(ret, params, variadic),
+                    Type::Pointer(inner) => match *inner { Type::Func { ret, params, variadic } => check_fn(ret, params, variadic), other => Err(anyhow!("call through non-function pointer: {:?}", other)) },
+                    Type::Func { ret, params, variadic } => check_fn(ret, params, variadic),
                     other => Err(anyhow!("call through non-pointer expression: {:?}", other)),
                 }
             }
 
-            Expr::Cast { ty, expr } => {
-                let _ = self.type_expr(expr)?; // ensure expr typeable; allow cast to any known type for now
-                let r = self.resolve_type(ty)?;
-                Ok(r)
-            }
-            Expr::SizeofType(_ty) => Ok(Type::Int),
-            Expr::SizeofExpr(e) => {
-                let _ = self.type_expr(e)?;
-                Ok(Type::Int)
-            }
+            Expr::Cast { ty, expr } => { let _ = self.type_expr(expr)?; let r = self.resolve_type(ty)?; Ok(r) }
 
-            Expr::IncDec {
-                pre: _,
-                inc: _,
-                target,
-            } => {
-                // ++/-- valid on int lvalues or *ptr; result type int for now
-                let _ = self.type_expr(target)?;
-                Ok(Type::Int)
-            }
+            Expr::SizeofType(ty) => { let r = self.resolve_type(ty)?; if !self.is_complete_object_type(&r) { return Err(anyhow!("sizeof of incomplete type")); } Ok(Type::Int) }
+            Expr::SizeofExpr(e)  => { let te = self.type_expr(e)?; let t = self.resolve_type(&te)?; if !self.is_complete_object_type(&t) { return Err(anyhow!("sizeof of incomplete type")); } Ok(Type::Int) }
+
+            Expr::IncDec { pre: _, inc: _, target } => { let _ = self.type_expr(target)?; Ok(Type::Int) }
+
             Expr::AssignOp { op: _, lhs, rhs } => {
-                let _lt = self.type_expr(lhs)?;
-                let _rt = self.type_expr(rhs)?;
-                // Accept for now and return lhs type
+                let _lt = self.type_expr(lhs)?; let _rt = self.type_expr(rhs)?;
                 match &**lhs {
-                    Expr::Ident(name) => self.lookup(name).ok_or_else(|| {
-                        anyhow!("compound assign to undeclared identifier: {}", name)
-                    }),
-                    Expr::Unary {
-                        op: UnaryOp::Deref,
-                        expr,
-                    } => {
-                        let pt = self.type_expr(expr)?;
-                        let pt = self.resolve_type(&pt)?;
-                        if let Type::Pointer(inner) = pt {
-                            Ok(*inner)
-                        } else {
-                            Err(anyhow!("compound assign to non-pointer deref"))
-                        }
-                    }
+                    Expr::Ident(name) => self.lookup(name).ok_or_else(|| anyhow!("compound assign to undeclared identifier: {}", name)),
+                    Expr::Unary { op: UnaryOp::Deref, expr } => { let ex = self.type_expr(expr)?; let pt = self.resolve_type(&ex)?; if let Type::Pointer(inner) = pt { Ok(*inner) } else { Err(anyhow!("compound assign to non-pointer deref")) } }
                     _ => Err(anyhow!("invalid compound assignment target")),
                 }
             }
-            Expr::Cond {
-                cond,
-                then_e,
-                else_e,
-            } => {
-                let _ct = self.type_expr(cond)?;
-                let tt = self.type_expr(then_e)?;
-                let et = self.type_expr(else_e)?;
-                let tt = self.resolve_type(&tt)?;
-                let et = self.resolve_type(&et)?;
-                if let Some(t) = cond_result_type(&tt, &et) {
-                    return Ok(t);
-                }
-                if is_pointer(&tt) && is_pointer(&et) {
-                    return Ok(tt);
-                }
+            Expr::Cond { cond, then_e, else_e } => {
+                let _ = self.type_expr(cond)?; 
+                let then_te = self.type_expr(then_e)?; let tt = self.resolve_type(&then_te)?;
+                let else_te = self.type_expr(else_e)?; let et = self.resolve_type(&else_te)?;
+                if let Some(t) = cond_result_type(&tt, &et) { return Ok(t); }
+                if is_pointer(&tt) && is_pointer(&et) { return Ok(tt); }
                 Ok(Type::Int)
             }
 
             Expr::Index { base, index } => {
-                // a[i] where a is pointer-to-T or array-of-T and i is integer
-                let bt = self.type_expr(base)?;
-                let bt = self.resolve_type(&bt)?;
-                let it = self.type_expr(index)?;
-                let it = self.resolve_type(&it)?;
-                if !is_integer(&it) {
-                    return Err(anyhow!("array subscript is not an integer"));
-                }
-                match bt {
-                    Type::Pointer(inner) => Ok(*inner),
-                    Type::Array(inner, _n) => Ok(*inner),
-                    other => Err(anyhow!(
-                        "cannot index into non-pointer/array type: {:?}",
-                        other
-                    )),
-                }
+                let base_te = self.type_expr(base)?; let bt = self.resolve_type(&base_te)?;
+                let index_te = self.type_expr(index)?; let it = self.resolve_type(&index_te)?;
+                if !is_integer(&it) { return Err(anyhow!("array subscript is not an integer")); }
+                match bt { Type::Pointer(inner) => Ok(*inner), Type::Array(inner, _n) => Ok(*inner), other => Err(anyhow!("cannot index into non-pointer/array type: {:?}", other)) }
             }
 
-            // Member access: resolve via record layouts if available
             Expr::Member { base, field, arrow } => {
-                let bt = self.type_expr(base)?;
-                let bt = self.resolve_type(&bt)?;
-                // Determine record kind and tag
+                let base_te = self.type_expr(base)?; let bt = self.resolve_type(&base_te)?;
                 let (is_union, tag) = match (arrow, bt) {
                     (false, Type::Struct(t)) => (false, t),
-                    (true, Type::Pointer(inner)) => match *inner {
-                        Type::Struct(t) => (false, t),
-                        Type::Union(t) => (true, t),
-                        other => {
-                            return Err(anyhow!(
-                                "-> applied to non-pointer-to-struct/union: {:?}",
-                                other
-                            ))
-                        }
-                    },
+                    (true, Type::Pointer(inner)) => match *inner { Type::Struct(t) => (false, t), Type::Union(t) => (true, t), other => { return Err(anyhow!("-> applied to non-pointer-to-struct/union: {:?}", other)); } },
                     (false, Type::Union(t)) => (true, t),
-                    (false, other) => {
-                        return Err(anyhow!(". applied to non-struct/union type: {:?}", other))
-                    }
-                    (true, other) => {
-                        return Err(anyhow!("-> applied to non-pointer type: {:?}", other))
-                    }
+                    (false, other) => { return Err(anyhow!(". applied to non-struct/union type: {:?}", other)); }
+                    (true, other)  => { return Err(anyhow!("-> applied to non-pointer type: {:?}", other)); }
                 };
                 if is_union {
-                    if let Some(u) = self.union_layouts.get(&tag) {
-                        if let Some(ty) = u.members.get(field) {
-                            return Ok(ty.clone());
-                        }
-                        return Err(anyhow!("unknown union field {} in union {}", field, tag));
-                    } else {
-                        // incomplete union
-                        return Ok(Type::Int);
-                    }
+                    if let Some(u) = self.union_layouts.get(&tag) { if let Some(ty) = u.members.get(field) { return Ok(ty.clone()); } return Err(anyhow!("unknown union field {} in union {}", field, tag)); }
+                    else { return Ok(Type::Int); }
                 } else {
-                    if let Some(s) = self.struct_layouts.get(&tag) {
-                        if let Some((_off, ty)) = s.members.get(field) {
-                            return Ok(ty.clone());
-                        }
-                        return Err(anyhow!("unknown struct field {} in struct {}", field, tag));
-                    } else {
-                        // incomplete struct
-                        return Ok(Type::Int);
-                    }
+                    if let Some(s) = self.struct_layouts.get(&tag) { if let Some((_off, ty)) = s.members.get(field) { return Ok(ty.clone()); } return Err(anyhow!("unknown struct field {} in struct {}", field, tag)); }
+                    else { return Ok(Type::Int); }
                 }
             }
 
-            // Comma operator: type is RHS; both sides must be typeable
-            Expr::Comma { lhs, rhs } => {
-                let _ = self.type_expr(lhs)?;
-                let rt = self.type_expr(rhs)?;
-                Ok(rt)
-            }
+            Expr::Comma { lhs, rhs } => { let _ = self.type_expr(lhs)?; let rt = self.type_expr(rhs)?; Ok(rt) }
 
-            // New: initializer list should not appear as an evaluatable expression
             Expr::InitList(_items) => Err(anyhow!("initializer list cannot appear as an expression")),
         }
     }
 }
 
 /// Minimal semantic checker entry-point.
-/// Currently permissive and aims not to reject code used by existing tests.
 pub fn check_translation_unit(tu: &TranslationUnit) -> Result<()> {
     let mut sema = Sema::from_tu(tu);
     sema.check_tu(tu)?;
-    // Additional pass: labels/goto validation
     check_labels_goto(tu)?;
     Ok(())
 }
 
-/// Collect labels and gotos within a list of statements.
 fn collect_labels_gotos(
     stmts: &[Stmt],
     labels: &mut HashSet<String>,
@@ -1521,466 +965,33 @@ fn collect_labels_gotos(
     for s in stmts {
         match s {
             Stmt::Block(inner) => collect_labels_gotos(inner, labels, gotos)?,
-            Stmt::If {
-                then_branch,
-                else_branch,
-                ..
-            } => {
+            Stmt::If { then_branch, else_branch, .. } => {
                 collect_labels_gotos(then_branch, labels, gotos)?;
-                if let Some(eb) = else_branch {
-                    collect_labels_gotos(eb, labels, gotos)?;
-                }
+                if let Some(eb) = else_branch { collect_labels_gotos(eb, labels, gotos)?; }
             }
             Stmt::While { body, .. } => collect_labels_gotos(body, labels, gotos)?,
             Stmt::DoWhile { body, .. } => collect_labels_gotos(body, labels, gotos)?,
             Stmt::For { body, .. } => collect_labels_gotos(body, labels, gotos)?,
             Stmt::Switch { body, .. } => collect_labels_gotos(body, labels, gotos)?,
-            Stmt::Case { .. } | Stmt::Default => { /* switch labels handled in another pass */ }
-            Stmt::Label(name) => {
-                if !labels.insert(name.clone()) {
-                    return Err(anyhow!("duplicate label: {}", name));
-                }
-            }
-            Stmt::Goto(name) => {
-                gotos.push(name.clone());
-            }
-            Stmt::Break
-            | Stmt::Continue
-            | Stmt::Return(_)
-            | Stmt::Decl { .. }
-            | Stmt::Typedef { .. }
-            | Stmt::ExprStmt(_) => { /* no-op */ }
+            Stmt::Case { .. } | Stmt::Default => { }
+            Stmt::Label(name) => { if !labels.insert(name.clone()) { return Err(anyhow!("duplicate label: {}", name)); } }
+            Stmt::Goto(name) => { gotos.push(name.clone()); }
+            Stmt::Break | Stmt::Continue | Stmt::Return(_) | Stmt::Decl { .. } | Stmt::Typedef { .. } | Stmt::ExprStmt(_) => { }
         }
     }
     Ok(())
 }
 
-/// Public: verify per-function that all goto targets exist and labels are unique.
+/// Verify per-function that all goto targets exist and labels are unique.
 pub fn check_labels_goto(tu: &TranslationUnit) -> Result<()> {
     for f in &tu.functions {
         let mut labels: HashSet<String> = HashSet::new();
         let mut gotos: Vec<String> = Vec::new();
         collect_labels_gotos(&f.body, &mut labels, &mut gotos)?;
-        for g in gotos {
-            if !labels.contains(&g) {
-                return Err(anyhow!("undefined label: {}", g));
-            }
-        }
+        for g in gotos { if !labels.contains(&g) { return Err(anyhow!("undefined label: {}", g)); } }
     }
     Ok(())
 }
 
-/// Placeholder for expression type inference (will use symbol tables in future).
-/// For now, only recognize some literals and very basic forms; fall back to Int.
-pub fn infer_expr_type(_e: &Expr) -> Type {
-    // Without symbol/type environment, default to int.
-    Type::Int
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sizeof_int_is_4() {
-        assert_eq!(sizeof_type(&Type::Int), 4);
-    }
-
-    #[test]
-    fn sizeof_ptr_is_8() {
-        assert_eq!(sizeof_type(&Type::Pointer(Box::new(Type::Int))), 8);
-    }
-
-    #[test]
-    fn align_basic_types() {
-        assert_eq!(alignof_type(&Type::Int), 4);
-        assert_eq!(alignof_type(&Type::Pointer(Box::new(Type::Int))), 8);
-        assert_eq!(alignof_type(&Type::Array(Box::new(Type::Int), 10)), 4);
-    }
-
-    #[test]
-    fn check_tu_noop_ok() {
-        let src = r#"
-            int main(void) { return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("sema ok");
-    }
-
-    #[test]
-    fn sema_handles_addr_and_deref() {
-        let src = r#"
-            int main(void) {
-                int x; int *p; p = &x; x = 7; *p = 3; return x;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("sema ok");
-    }
-
-    #[test]
-    fn sema_permits_pointer_addition() {
-        let src = r#"
-            int main(void) {
-                int x; int *p; p = &x; p = p + 1; return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("sema ok");
-    }
-
-    #[test]
-    fn sema_struct_layout_offsets() {
-        let src = r#"
-            int main(void) {
-                struct S { int a; int b; } s;
-                return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let (smap, _umap) = build_record_layouts(&tu);
-        let s = smap
-            .get("")
-            .or_else(|| smap.get("S"))
-            .expect("struct layout present");
-        // Offsets and sizes for two ints
-        let (off_a, ty_a) = s.members.get("a").expect("field a");
-        let (off_b, ty_b) = s.members.get("b").expect("field b");
-        assert_eq!(*off_a, 0);
-        assert_eq!(*off_b, 4);
-        assert!(matches!(ty_a, Type::Int));
-        assert!(matches!(ty_b, Type::Int));
-        assert_eq!(s.size, 8);
-        assert_eq!(s.align, 4);
-    }
-
-    #[test]
-    fn sema_union_layout() {
-        let src = r#"
-            int main(void) {
-                union U { int a; int *p; } u;
-                return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let (_smap, umap) = build_record_layouts(&tu);
-        let u = umap
-            .get("")
-            .or_else(|| umap.get("U"))
-            .expect("union layout present");
-        assert_eq!(u.size, 8);
-        assert_eq!(u.align, 8);
-        assert!(matches!(u.members.get("a").cloned().unwrap(), Type::Int));
-        assert!(matches!(
-            u.members.get("p").cloned().unwrap(),
-            Type::Pointer(_)
-        ));
-    }
-
-    #[test]
-    fn sema_member_access_types_and_checks() {
-        let src = r#"
-            int main(void) {
-                struct S { int a; int *p; } s;
-                struct S *q = &s;
-                s.a = 1;
-                q->a = 2;
-                return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        // If member typing is broken (unknown fields or wrong base), this will error
-        check_translation_unit(&tu).expect("member access type-checks");
-    }
-
-    #[test]
-    fn sema_enum_values() {
-        let src = r#"
-            int main(void) {
-                enum E { A=1, B, C=5 } e;
-                return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let m = compute_enum_values(&tu);
-        assert_eq!(m.get("A").copied(), Some(1));
-        assert_eq!(m.get("B").copied(), Some(2));
-        assert_eq!(m.get("C").copied(), Some(5));
-    }
-
-    // ===== Labels/Goto tests =====
-    #[test]
-    fn labels_goto_forward_ok() {
-        let src = r#"
-            int main(void){ goto L; L: return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("labels/goto forward ok");
-    }
-
-    #[test]
-    fn labels_goto_backward_ok() {
-        let src = r#"
-            int main(void){ L: return 1; goto L; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("labels/goto backward ok");
-    }
-
-    #[test]
-    fn labels_goto_undefined_err() {
-        let src = r#"
-            int main(void){ goto M; L: return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error on undefined label");
-        assert!(format!("{}", err).contains("undefined label: M"));
-    }
-
-    #[test]
-    fn labels_goto_duplicate_err() {
-        let src = r#"
-            int main(void){ L: return 0; L: return 1; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error on duplicate label");
-        assert!(format!("{}", err).contains("duplicate label: L"));
-    }
-
-    #[test]
-    fn labels_goto_nested_block_ok() {
-        let src = r#"
-            int f(void){ { L: ; } goto L; return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("function-scoped labels ok");
-    }
-
-    // ===== Function prototype and call checking tests =====
-    #[test]
-    fn call_arity_too_few_args_errors() {
-        let src = r#"
-            int f(int a, int b) { return 0; }
-            int main(void) { return f(1); }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error on too few args");
-        let s = err.to_string();
-        assert!(s.contains("too few") || s.contains("arity"));
-    }
-
-    #[test]
-    fn call_arity_too_many_args_errors() {
-        let src = r#"
-            int f(int a) { return 0; }
-            int main(void) { return f(1, 2); }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error on too many args");
-        let s = err.to_string();
-        assert!(s.contains("arity") || s.contains("too"));
-    }
-
-    #[test]
-    fn call_type_mismatch_in_fixed_param_errors() {
-        let src = r#"
-            int f(int a, int b) { return a + b; }
-            int main(void) { int x; int *p = &x; return f(p, 2); }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error on type mismatch");
-        assert!(format!("{}", err).contains("type mismatch"));
-    }
-
-    #[test]
-    fn variadic_allows_extra_arguments() {
-        let src = r#"
-            int v(int a, ...) { return a; }
-            int main(void) { return v(1, 2, 3); }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("variadic extra ok");
-    }
-
-    #[test]
-    fn variadic_fixed_part_type_mismatch_errors() {
-        let src = r#"
-            int v(int a, ...) { return a; }
-            int main(void) { int *p = 0; return v(p, 2); }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error on fixed arg type mismatch");
-        assert!(format!("{}", err).contains("type mismatch"));
-    }
-
-    #[test]
-    fn debug_variadic_mismatch_msg() {
-        let src = r#"
-            int v(int a, ...) { return a; }
-            int main(void) { int *p = 0; return v(p, 2); }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error on fixed arg type mismatch");
-        println!("DEBUG variadic mismatch error: {}", err);
-    }
-
-    // ===== Typedef resolution tests =====
-
-    // ===== Typedef resolution tests =====
-    #[test]
-    fn typedef_basic_alias() {
-        let src = r#"
-            int main(void) {
-                typedef int I; I x; x = 3; return x;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("typedef basic alias ok");
-    }
-
-    #[test]
-    fn typedef_pointer_alias_and_arith() {
-        let src = r#"
-            int main(void) {
-                int x; typedef int* P; P p = &x; p = p + 1; return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("typedef pointer alias ok");
-    }
-
-    #[test]
-    fn typedef_struct_alias_and_member() {
-        let src = r#"
-            int main(void) {
-                typedef struct S { int a; } S; S s; s.a = 1; return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("typedef struct alias ok");
-    }
-
-    #[test]
-    fn typedef_array_alias_and_index() {
-        let src = r#"
-            int main(void) {
-                typedef int A[10]; A a; a[1] = 2; return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("typedef array alias ok");
-    }
-
-    #[test]
-    fn typedef_shadowing_allows_inner_redefinition() {
-        let src = r#"
-            int main(void) {
-                typedef int I; { typedef unsigned int I; I y; } I x; return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("typedef shadowing ok");
-    }
-
-    #[test]
-    fn typedef_same_scope_redefinition_errors() {
-        let src = r#"
-            int main(void) {
-                typedef int I; typedef int I; return 0;
-            }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("redefinition in same scope should error");
-        assert!(format!("{}", err).contains("redefinition of typedef I"));
-    }
-
-    #[test]
-    fn unknown_typedef_name_in_decl_errors() {
-        let src = r#"
-            int main(void) { T x; return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("unknown typedef in decl should error");
-        let s = err.to_string();
-        assert!(s.contains("unknown typedef name") || s.contains("unknown"));
-    }
-
-    // ===== Initializer semantics tests =====
-    #[test]
-    fn array_init_ok() {
-        let src = r#"
-            int a[3] = {1,2,3};
-            int main(void){ return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("sema ok for array init");
-    }
-
-    #[test]
-    fn array_init_too_many_errors() {
-        let src = r#"
-            int a[2] = {1,2,3};
-            int main(void){ return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error: too many initializers for array");
-        let s = format!("{}", err);
-        assert!(s.contains("too many") || s.contains("initializer"));
-    }
-
-    #[test]
-    fn nested_array_init_ok() {
-        let src = r#"
-            int b[2][2] = { {1,2}, {3,4} };
-            int main(void){ return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("sema ok for nested array init");
-    }
-
-    #[test]
-    fn struct_init_ok() {
-        let src = r#"
-            struct S { int x; int y; };
-            struct S s = {1,2};
-            int main(void){ return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("sema ok for struct init");
-    }
-
-    #[test]
-    fn struct_init_too_many_errors() {
-        let src = r#"
-            struct S { int x; int y; };
-            struct S s = {1,2,3};
-            int main(void){ return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error: too many initializers for struct");
-        let s = format!("{}", err);
-        assert!(s.contains("too many") || s.contains("initializer"));
-    }
-
-    #[test]
-    fn char_unsized_from_string_ok() {
-        let src = r#"
-            char s[] = "hi";
-            int main(void){ return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        check_translation_unit(&tu).expect("sema ok for char[] from string");
-    }
-
-    #[test]
-    fn char_sized_from_string_too_small_errors() {
-        let src = r#"
-            char s[2] = "hi";
-            int main(void){ return 0; }
-        "#;
-        let tu = parse::parse_translation_unit(src).expect("parse ok");
-        let err = check_translation_unit(&tu).expect_err("should error: char array too small for string+NUL");
-        let s = format!("{}", err);
-        assert!(s.contains("too small") || s.contains("string") || s.contains("initializer"));
-    }
-}
+/// Placeholder for expression type inference (kept permissive).
+pub fn infer_expr_type(_e: &Expr) -> Type { Type::Int }

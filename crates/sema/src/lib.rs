@@ -887,7 +887,6 @@ impl Sema {
             }
         }
     }
-
     fn decay_array_to_ptr(&self, t: &Type) -> Result<Type> {
         let r = self.resolve_type(t)?;
         match r {
@@ -900,6 +899,19 @@ impl Sema {
         let p = self.resolve_type(param)?;
         let a = self.decay_array_to_ptr(arg)?;
         Ok((is_integer(&p) && is_integer(&a)) || (is_pointer(&p) && is_pointer(&a)))
+    }
+
+    // Recognize a null pointer constant expression in our subset
+    // Accept: 0 and (T*)0 as null pointer constants.
+    fn is_null_pointer_constant_expr(e: &Expr) -> bool {
+        match e {
+            Expr::IntLiteral(s) => parse_int_literal_str(s).map_or(false, |v| v == 0),
+            Expr::Cast { ty: Type::Pointer(_), expr } => match expr.as_ref() {
+                Expr::IntLiteral(s) => parse_int_literal_str(s).map_or(false, |v| v == 0),
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     fn type_expr(&mut self, e: &Expr) -> Result<Type> {
@@ -1198,6 +1210,11 @@ impl Sema {
                             ));
                         }
                         for (i, pty) in params.iter().enumerate() {
+                            // Allow null pointer constants for pointer params
+                            let pty_res = self.resolve_type(pty)?;
+                            if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) {
+                                continue;
+                            }
                             let aty = self.type_expr(&args[i])?;
                             if !self.type_compatible_for_param(pty, &aty)? {
                                 let rpt = self.resolve_type(pty)?;
@@ -1251,6 +1268,11 @@ impl Sema {
                     }
                     // Check fixed arguments
                     for (i, pty) in params.iter().enumerate() {
+                        // Allow null pointer constants for pointer params
+                        let pty_res = self.resolve_type(pty)?;
+                        if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) {
+                            continue;
+                        }
                         let aty = self.type_expr(&args[i])?;
                         if !self.type_compatible_for_param(pty, &aty)? {
                             let rpt = self.resolve_type(pty)?;
@@ -1299,6 +1321,11 @@ impl Sema {
                         ));
                     }
                     for (i, pty) in params.iter().enumerate() {
+                        // Allow null pointer constants for pointer params
+                        let pty_res = self.resolve_type(pty)?;
+                        if matches!(pty_res, Type::Pointer(_)) && Sema::is_null_pointer_constant_expr(&args[i]) {
+                            continue;
+                        }
                         let aty = self.type_expr(&args[i])?;
                         if !self.type_compatible_for_param(pty, &aty)? {
                             let rpt = self.resolve_type(pty)?;

@@ -205,7 +205,12 @@ impl Parser {
     fn parse_params(&mut self) -> Result<(Vec<Param>, bool)> {
         // () or (void)
         if self.consume_punct(P::RParen) { return Ok((vec![], false)); }
-        if self.consume_keyword(Kw::Void) { self.expect_punct(P::RParen)?; return Ok((vec![], false)); }
+        if let (Some(K::Keyword(Kw::Void)), Some(K::Punct(P::RParen))) = (self.peek_kind(), self.peek_kind_n(1)) {
+            // Treat 'void)' as an empty parameter list; otherwise, 'void' is a normal type-specifier
+            self.pos += 1; // consume 'void'
+            self.pos += 1; // consume ')'
+            return Ok((vec![], false));
+        }
 
         // Disallow leading ellipsis (must have at least one named parameter before ...)
         if let Some(K::Punct(P::Ellipsis)) = self.peek_kind() { bail!("ellipsis requires at least one named parameter before it"); }
@@ -237,7 +242,11 @@ impl Parser {
     fn parse_param_types_list(&mut self) -> Result<(Vec<Type>, bool)> {
         // () or (void)
         if self.consume_punct(P::RParen) { return Ok((vec![], false)); }
-        if self.consume_keyword(Kw::Void) { self.expect_punct(P::RParen)?; return Ok((vec![], false)); }
+        if let (Some(K::Keyword(Kw::Void)), Some(K::Punct(P::RParen))) = (self.peek_kind(), self.peek_kind_n(1)) {
+            self.pos += 1; // consume 'void'
+            self.pos += 1; // consume ')'
+            return Ok((vec![], false));
+        }
 
         let mut params: Vec<Type> = Vec::new();
         let mut variadic = false;

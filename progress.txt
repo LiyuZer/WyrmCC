@@ -405,3 +405,21 @@ Next Focus (unchanged sequence)
 - Next
   - Broaden UAC coverage (signed/unsigned mixes) with tests.
   - Driver CLI polish: -S/-c/-o, multiple inputs/linking, and common flags.
+[2025-08-31] UAC Semantics And Runtime Tests
+- Sema
+  - Added uac_integers.rs: promotions of char/short -> int; mixed signed/unsigned arithmetic; shifts; comparisons.
+  - Adjusted tests to avoid unsupported numeric suffixes; all sema tests green.
+- Driver
+  - Added run_uac.rs runtime tests: signed/unsigned comparisons (expect "0 0"), unsigned vs signed right shifts (expect "2147483647 -1"), and promotions sum (expect "3").
+  - All tests pass via wyrmcc run with clang-18/llc-18.
+- Backend
+  - No code changes required for these UAC cases; existing unsigned-aware ops and comparisons suffice. Workspace remains green.
+- Git
+  - Commits authored as "Eve the Coding Dragon" and pushed to origin.
+
+Checklist Delta
+- G. Testing — UAC integer matrix: coverage expanded (promotions, comparisons, shifts); further operators to follow.
+
+Next Focus
+- Aggregates: parser+sema brace initializers; backend constants/local zero-fill+stores; tests.
+- Driver CLI polish and additional flags coverage.

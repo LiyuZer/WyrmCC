@@ -138,6 +138,24 @@ impl Parser {
                     let mut mty = self.parse_type()?;
                     while self.consume_punct(P::Star) { mty = Type::Pointer(Box::new(mty)); }
                     let mname = self.expect_ident()?;
+                    // Optional array declarators for struct member
+                    if self.consume_punct(P::LBracket) {
+                        let mut sizes: Vec<usize> = Vec::new();
+                        loop {
+                            if self.consume_punct(P::RBracket) {
+                                sizes.push(0);
+                            } else {
+                                let sz = match self.peek_kind() {
+                                    Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                                    other => bail!("expected integer literal array size in struct member, got {:?}", other),
+                                };
+                                self.expect_punct(P::RBracket)?;
+                                sizes.push(sz);
+                            }
+                            if !self.consume_punct(P::LBracket) { break; }
+                        }
+                        for sz in sizes.into_iter().rev() { mty = Type::Array(Box::new(mty), sz); }
+                    }
                     self.expect_punct(P::Semicolon)?;
                     members_acc.push((mname, mty));
                 }
@@ -154,6 +172,24 @@ impl Parser {
                     let mut mty = self.parse_type()?;
                     while self.consume_punct(P::Star) { mty = Type::Pointer(Box::new(mty)); }
                     let mname = self.expect_ident()?;
+                    // Optional array declarators for union member
+                    if self.consume_punct(P::LBracket) {
+                        let mut sizes: Vec<usize> = Vec::new();
+                        loop {
+                            if self.consume_punct(P::RBracket) {
+                                sizes.push(0);
+                            } else {
+                                let sz = match self.peek_kind() {
+                                    Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                                    other => bail!("expected integer literal array size in union member, got {:?}", other),
+                                };
+                                self.expect_punct(P::RBracket)?;
+                                sizes.push(sz);
+                            }
+                            if !self.consume_punct(P::LBracket) { break; }
+                        }
+                        for sz in sizes.into_iter().rev() { mty = Type::Array(Box::new(mty), sz); }
+                    }
                     self.expect_punct(P::Semicolon)?;
                     members_acc.push((mname, mty));
                 }

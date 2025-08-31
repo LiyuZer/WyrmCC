@@ -634,12 +634,28 @@ impl Sema {
                         members.sort_by_key(|(off, _)| *off);
                         if items.len() > members.len() { return Err(anyhow!("too many initializers for struct")); }
                         for (i, it) in items.iter().enumerate() {
-                            if let Expr::InitList(_) = it { return Err(anyhow!("nested initializer for struct field {} not supported in v1", i+1)); }
                             let field_ty = &members[i].1;
-                            let it_te = self.type_expr(it)?;
-                            let at = self.resolve_type(&it_te)?;
-                            if (is_integer(field_ty) && is_integer(&at)) || (is_pointer(field_ty) && is_pointer(&at)) { /* ok */ } else {
-                                return Err(anyhow!("type mismatch in struct field {} initializer", i+1));
+                            match (field_ty, it) {
+                                // Allow nested list or string for array fields
+                                (Type::Array(_, _), Expr::InitList(_)) | (Type::Array(_, _), Expr::StringLiteral(_)) => {
+                                    self.check_initializer(field_ty, it)?;
+                                }
+                                // Allow nested list for struct/union fields (recurse)
+                                (Type::Struct(_), Expr::InitList(_)) | (Type::Union(_), Expr::InitList(_)) => {
+                                    self.check_initializer(field_ty, it)?;
+                                }
+                                // Disallow other nested lists
+                                (_, Expr::InitList(_)) => {
+                                    return Err(anyhow!("nested initializer for struct field {} not supported in v1", i+1));
+                                }
+                                // Scalar/pointer cases
+                                _ => {
+                                    let it_te = self.type_expr(it)?;
+                                    let at = self.resolve_type(&it_te)?;
+                                    if (is_integer(field_ty) && is_integer(&at)) || (is_pointer(field_ty) && is_pointer(&at)) { /* ok */ } else {
+                                        return Err(anyhow!("type mismatch in struct field {} initializer", i+1));
+                                    }
+                                }
                             }
                         }
                         Ok(())

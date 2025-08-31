@@ -339,7 +339,37 @@ impl Parser {
             };
             if next_is_type {
                 self.pos += 1; // '('
-                let ty = self.parse_type_with_ptrs()?;
+                let mut ty = self.parse_type_with_ptrs()?;
+                // Support abstract declarators: (T (*)(...)) and (T (*)[N])
+                if self.consume_punct(P::LParen) {
+                    self.expect_punct(P::Star)?;
+                    // Optional identifier (ignored in abstract declarators)
+                    if let Some(K::Identifier(_)) = self.peek_kind() { let _ = self.bump(); }
+                    self.expect_punct(P::RParen)?;
+                    if self.consume_punct(P::LParen) {
+                        let (param_types, variadic) = self.parse_param_types_list()?; // consumes ')'
+                        ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
+                    } else if self.consume_punct(P::LBracket) {
+                        let mut sizes: Vec<usize> = Vec::new();
+                        loop {
+                            if self.consume_punct(P::RBracket) {
+                                sizes.push(0);
+                            } else {
+                                let sz = match self.peek_kind() {
+                                    Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                                    other => bail!("expected integer literal array size, got {:?}", other),
+                                };
+                                self.expect_punct(P::RBracket)?;
+                                sizes.push(sz);
+                            }
+                            if !self.consume_punct(P::LBracket) { break; }
+                        }
+                        for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
+                        ty = Type::Pointer(Box::new(ty));
+                    } else {
+                        ty = Type::Pointer(Box::new(ty));
+                    }
+                }
                 self.expect_punct(P::RParen)?;
                 let e = self.parse_unary()?;
                 return Ok(Expr::Cast { ty, expr: Box::new(e) });
@@ -735,15 +765,44 @@ impl Parser {
             let mut ty = self.parse_type()?;
             while self.consume_punct(P::Star) { ty = Type::Pointer(Box::new(ty)); }
 
-            // typedef T (*Name)(param-types);
+            // typedef T (*Name)(param-types); or typedef T (*Name)[dims];
             if self.consume_punct(P::LParen) {
                 self.expect_punct(P::Star)?;
                 let name = self.expect_ident()?;
                 self.expect_punct(P::RParen)?;
-                self.expect_punct(P::LParen)?;
-                let (param_types, variadic) = self.parse_param_types_list()?; // consumes ')'
-                let fn_ty = Type::Func { ret: Box::new(ty), params: param_types, variadic };
-                let ty = Type::Pointer(Box::new(fn_ty));
+                // Function-pointer typedef
+                if self.consume_punct(P::LParen) {
+                    let (param_types, variadic) = self.parse_param_types_list()?; // consumes ')'
+                    let fn_ty = Type::Func { ret: Box::new(ty), params: param_types, variadic };
+                    let ty = Type::Pointer(Box::new(fn_ty));
+                    self.expect_punct(P::Semicolon)?;
+                    self.insert_typedef(name.clone());
+                    return Ok(Stmt::Typedef { name, ty });
+                }
+                // Pointer-to-array typedef
+                if self.consume_punct(P::LBracket) {
+                    let mut sizes: Vec<usize> = Vec::new();
+                    loop {
+                        if self.consume_punct(P::RBracket) {
+                            sizes.push(0);
+                        } else {
+                            let sz = match self.peek_kind() {
+                                Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                                other => bail!("expected integer literal array size, got {:?}", other),
+                            };
+                            self.expect_punct(P::RBracket)?;
+                            sizes.push(sz);
+                        }
+                        if !self.consume_punct(P::LBracket) { break; }
+                    }
+                    for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
+                    let ty = Type::Pointer(Box::new(ty));
+                    self.expect_punct(P::Semicolon)?;
+                    self.insert_typedef(name.clone());
+                    return Ok(Stmt::Typedef { name, ty });
+                }
+                // Bare pointer typedef: typedef T (*Name);
+                let ty = Type::Pointer(Box::new(ty));
                 self.expect_punct(P::Semicolon)?;
                 self.insert_typedef(name.clone());
                 return Ok(Stmt::Typedef { name, ty });
@@ -794,14 +853,43 @@ impl Parser {
                 return Ok(Stmt::ExprStmt(Expr::IntLiteral("0".to_string())));
             }
 
-            // Local function-pointer declaration support: int (*fp)(...);
+            // Local pointer declarator using parentheses: int (*name)(...); or int (*name)[...];
             if self.consume_punct(P::LParen) {
                 self.expect_punct(P::Star)?;
                 let name = self.expect_ident()?;
                 self.expect_punct(P::RParen)?;
-                self.expect_punct(P::LParen)?;
-                let (param_types, variadic) = self.parse_param_types_list()?;
-                let ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
+                // Function-pointer
+                if self.consume_punct(P::LParen) {
+                    let (param_types, variadic) = self.parse_param_types_list()?;
+                    let ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
+                    let init = if self.consume_punct(P::Assign) { Some(self.parse_init_expr()?) } else { None };
+                    self.expect_punct(P::Semicolon)?;
+                    return Ok(Stmt::Decl { name, ty, init, storage, quals });
+                }
+                // Pointer-to-array
+                if self.consume_punct(P::LBracket) {
+                    let mut sizes: Vec<usize> = Vec::new();
+                    loop {
+                        if self.consume_punct(P::RBracket) {
+                            sizes.push(0);
+                        } else {
+                            let sz = match self.peek_kind() {
+                                Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                                other => bail!("expected integer literal array size, got {:?}", other),
+                            };
+                            self.expect_punct(P::RBracket)?;
+                            sizes.push(sz);
+                        }
+                        if !self.consume_punct(P::LBracket) { break; }
+                    }
+                    for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
+                    let ty = Type::Pointer(Box::new(ty));
+                    let init = if self.consume_punct(P::Assign) { Some(self.parse_init_expr()?) } else { None };
+                    self.expect_punct(P::Semicolon)?;
+                    return Ok(Stmt::Decl { name, ty, init, storage, quals });
+                }
+                // Bare pointer declaration: int (*name);
+                let ty = Type::Pointer(Box::new(ty));
                 let init = if self.consume_punct(P::Assign) { Some(self.parse_init_expr()?) } else { None };
                 self.expect_punct(P::Semicolon)?;
                 return Ok(Stmt::Decl { name, ty, init, storage, quals });
@@ -893,15 +981,45 @@ impl Parser {
             return Ok(());
         }
 
-        // Support global function-pointer declarator: T (*name)(params) [= init];
+        // Support global pointer declarators: T (*name)(params) or T (*name)[dims];
         if self.consume_punct(P::LParen) {
             self.expect_punct(P::Star)?;
             let name = self.expect_ident()?;
             self.expect_punct(P::RParen)?;
-            self.expect_punct(P::LParen)?;
-            let (param_types, variadic) = self.parse_param_types_list()?; // consumes ')'
-            let decl_ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
-            // Optional initializer for function-pointer globals: e.g., int (*fp)(int) = f;
+            // Function-pointer
+            if self.consume_punct(P::LParen) {
+                let (param_types, variadic) = self.parse_param_types_list()?; // consumes ')'
+                let decl_ty = Type::Pointer(Box::new(Type::Func { ret: Box::new(ty), params: param_types, variadic }));
+                let init = if self.consume_punct(P::Assign) { Some(self.parse_init_expr()?) } else { None };
+                self.expect_punct(P::Semicolon)?;
+                globals.push(Global { name, ty: decl_ty, init, storage, quals });
+                return Ok(());
+            }
+            // Pointer-to-array
+            if self.consume_punct(P::LBracket) {
+                let mut sizes: Vec<usize> = Vec::new();
+                loop {
+                    if self.consume_punct(P::RBracket) {
+                        sizes.push(0);
+                    } else {
+                        let sz = match self.peek_kind() {
+                            Some(K::Literal(LiteralKind::Int { repr, .. })) => { let _ = self.bump(); repr.parse::<usize>().unwrap_or(0) }
+                            other => bail!("expected integer literal array size, got {:?}", other),
+                        };
+                        self.expect_punct(P::RBracket)?;
+                        sizes.push(sz);
+                    }
+                    if !self.consume_punct(P::LBracket) { break; }
+                }
+                for sz in sizes.into_iter().rev() { ty = Type::Array(Box::new(ty), sz); }
+                let decl_ty = Type::Pointer(Box::new(ty));
+                let init = if self.consume_punct(P::Assign) { Some(self.parse_init_expr()?) } else { None };
+                self.expect_punct(P::Semicolon)?;
+                globals.push(Global { name, ty: decl_ty, init, storage, quals });
+                return Ok(());
+            }
+            // Bare pointer variable: T (*name);
+            let decl_ty = Type::Pointer(Box::new(ty));
             let init = if self.consume_punct(P::Assign) { Some(self.parse_init_expr()?) } else { None };
             self.expect_punct(P::Semicolon)?;
             globals.push(Global { name, ty: decl_ty, init, storage, quals });

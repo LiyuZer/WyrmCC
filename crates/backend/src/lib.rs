@@ -2375,6 +2375,105 @@ impl Emitter {
             }
             // Simple assignment to lvalue (identifier already handled above)
             Expr::Assign { name, value } => {
+                // Determine declared type of the LHS identifier (local preferred)
+                let lhs_ty = self
+                    .locals_ty
+                    .get(name)
+                    .cloned()
+                    .or_else(|| self.global_types.get(name).cloned())
+                    .unwrap_or(Type::Int);
+
+                // If assigning to a struct/union object, emit memcpy instead of scalar store
+                let memcpy_struct_union = matches!(lhs_ty, Type::Struct(_) | Type::Union(_));
+                if memcpy_struct_union {
+                    // Compute destination pointer for the LHS identifier
+                    let dst_ptr = if let Some(p) = self.locals.get(name).cloned() {
+                        p
+                    } else {
+                        // Fallback: create storage for an undeclared local (should not normally happen)
+                        let alloca_name = format!("%{}.addr", name);
+                        let sz = match &lhs_ty {
+                            Type::Struct(tag) => self
+                                .struct_layouts
+                                .get(tag)
+                                .map(|l| l.size)
+                                .unwrap_or(0),
+                            Type::Union(tag) => self
+                                .union_layouts
+                                .get(tag)
+                                .map(|l| l.size)
+                                .unwrap_or(0),
+                            _ => 0,
+                        };
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = alloca i8, i64 {}",
+                            alloca_name, sz
+                        );
+                        self.locals.insert(name.clone(), alloca_name.clone());
+                        self.locals_ty.insert(name.clone(), lhs_ty.clone());
+                        alloca_name
+                    };
+
+                    // Compute source pointer for RHS lvalue of the same type
+                    let src_ptr_opt: Option<String> = match &**value {
+                        Expr::Ident(n2) => {
+                            if let Some(p) = self.locals.get(n2).cloned() {
+                                Some(p)
+                            } else if self.global_types.contains_key(n2) {
+                                Some(format!("@{}", n2))
+                            } else {
+                                None
+                            }
+                        }
+                        Expr::Unary { op: UnaryOp::Deref, expr } => {
+                            let (pstr, _pc) = self.emit_expr(expr);
+                            Some(pstr)
+                        }
+                        Expr::Index { base, index } => {
+                            let (ptr, _ety) = self.emit_index_ptr(base, index);
+                            Some(ptr)
+                        }
+                        Expr::Member { base, field, arrow } => {
+                            let (ptr, _fty) = self.emit_member_ptr(base, field, *arrow);
+                            Some(ptr)
+                        }
+                        _ => None,
+                    };
+
+                    if let Some(src_ptr) = src_ptr_opt {
+                        // Determine size from type
+                        let sz = match &lhs_ty {
+                            Type::Struct(tag) => self
+                                .struct_layouts
+                                .get(tag)
+                                .map(|l| l.size)
+                                .unwrap_or(0),
+                            Type::Union(tag) => self
+                                .union_layouts
+                                .get(tag)
+                                .map(|l| l.size)
+                                .unwrap_or(0),
+                            _ => 0,
+                        } as i64;
+                        // Declare memcpy once and emit call
+                        self.add_decl("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+                        let _ = writeln!(
+                            self.buf,
+                            "  call void @llvm.memcpy.p0.p0.i64(ptr {}, ptr {}, i64 {}, i1 false)",
+                            dst_ptr, src_ptr, sz
+                        );
+                        self.consts.remove(name);
+                        return ("0".to_string(), Some(0));
+                    } else {
+                        // Fallback: evaluate RHS (no-op store), return 0
+                        let (_vstr, _vc) = self.emit_expr(value);
+                        self.consts.remove(name);
+                        return ("0".to_string(), Some(0));
+                    }
+                }
+
+                // Scalar or pointer path (previous behavior)
                 let (vstr, vc) = self.emit_expr(value);
                 let ptr = if let Some(p) = self.locals.get(name) {
                     p.clone()
@@ -2401,8 +2500,71 @@ impl Emitter {
                 }
                 (vstr, vc)
             }
-            // Store i32 into *ptr; due to unknown aliasing, invalidate integer constant cache
+            // Store assignment through pointer; support struct/union copies via memcpy
             Expr::AssignDeref { ptr: pexpr, value } => {
+                // Determine the pointee type of *pexpr
+                let dst_val_ty = self
+                    .type_of_expr(&Expr::Unary { op: UnaryOp::Deref, expr: pexpr.clone() })
+                    .unwrap_or(Type::Int);
+
+                if matches!(dst_val_ty, Type::Struct(_) | Type::Union(_)) {
+                    // Destination pointer (already a ptr value)
+                    let (dst_ptr, _pc) = self.emit_expr(pexpr);
+                    // Source pointer from RHS lvalue
+                    let src_ptr_opt: Option<String> = match &**value {
+                        Expr::Ident(n2) => {
+                            if let Some(p) = self.locals.get(n2).cloned() {
+                                Some(p)
+                            } else if self.global_types.contains_key(n2) {
+                                Some(format!("@{}", n2))
+                            } else {
+                                None
+                            }
+                        }
+                        Expr::Unary { op: UnaryOp::Deref, expr } => {
+                            let (pstr, _pc) = self.emit_expr(expr);
+                            Some(pstr)
+                        }
+                        Expr::Index { base, index } => {
+                            let (ptr, _ety) = self.emit_index_ptr(base, index);
+                            Some(ptr)
+                        }
+                        Expr::Member { base, field, arrow } => {
+                            let (ptr, _fty) = self.emit_member_ptr(base, field, *arrow);
+                            Some(ptr)
+                        }
+                        _ => None,
+                    };
+                    if let Some(src_ptr) = src_ptr_opt {
+                        let sz = match &dst_val_ty {
+                            Type::Struct(tag) => self
+                                .struct_layouts
+                                .get(tag)
+                                .map(|l| l.size)
+                                .unwrap_or(0),
+                            Type::Union(tag) => self
+                                .union_layouts
+                                .get(tag)
+                                .map(|l| l.size)
+                                .unwrap_or(0),
+                            _ => 0,
+                        } as i64;
+                        self.add_decl("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+                        let _ = writeln!(
+                            self.buf,
+                            "  call void @llvm.memcpy.p0.p0.i64(ptr {}, ptr {}, i64 {}, i1 false)",
+                            dst_ptr, src_ptr, sz
+                        );
+                        self.consts.clear();
+                        return ("0".to_string(), Some(0));
+                    } else {
+                        let (_vstr, _vc) = self.emit_expr(value);
+                        self.consts.clear();
+                        return ("0".to_string(), Some(0));
+                    }
+                }
+
+                // Fallback scalar store behavior
                 let (pstr, _pc) = self.emit_expr(pexpr);
                 let (vstr, _vc) = self.emit_expr(value);
                 let _ = writeln!(self.buf, "  store i32 {}, ptr {}", vstr, pstr);

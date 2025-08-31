@@ -326,3 +326,25 @@ Execution Checklist — Next Actions
 - [ ] Add driver CLI tests for -S/-c/-o and multi-input; fill any gaps
 - [ ] Expand UAC runtime tests; align sema/backend where gaps appear
 - [ ] Keep suites green: cargo test -p parse -p sema -p backend -p wyrmcc
+
+[2025-08-31] Sema Incomplete/Composite Tests
+- Added sema tests for incomplete types and composite array declarations:
+  - Incomplete struct/union object errors; pointer-to-incomplete allowed
+  - sizeof on incomplete struct and array element rejected
+  - Global arrays: unsized↔sized OK; conflicting fixed sizes error; extern unsized then sized OK
+- Result: All new tests pass with current sema, confirming support for incomplete-type diagnostics,
+  sizeof completeness checks, and basic composite array size compatibility.
+
+Checklist Delta
+- C. Semantics – Incomplete Types and Composite Arrays: basic checks covered by tests — done (v1).
+
+Next Focus Candidates
+1) Driver CLI breadth: add tests for -S (emit IR), -c (object), -o, and multiple inputs; -I/-D/-U flags coverage
+2) Qualifiers (const/volatile) propagation in assignments/params (tests + implementation)
+3) UAC expansion across signed/unsigned mixes (arith/compare/shift/?:) with runtime smoke
+
+Execution Checklist — Upcoming
+- [ ] Add driver CLI tests for -S/-c/-o and multi-input; fill any gaps in driver
+- [ ] Add sema tests for qualifiers propagation; implement as needed
+- [ ] Expand UAC test matrices (sema + a few runtime checks)
+- [ ] Keep suites green: cargo test -p parse -p sema -p backend -p wyrmcc

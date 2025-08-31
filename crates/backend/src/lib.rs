@@ -733,12 +733,22 @@ impl Emitter {
                 Some(Type::Array(_, _)) => true,
                 _ => false,
             },
-            // Indexing into arrays/pointers yields a pointer in many contexts (especially for further indexing or pointer arith)
+            // Indexing: only pointer-valued if the element type itself is non-scalar (e.g., array/struct/union/pointer)
             Expr::Index { base, .. } => {
                 if let Some(bt) = self.type_of_expr(base) {
                     match bt {
-                        Type::Array(_, _) => true, // a[i] behaves as pointer to inner in pointer contexts
-                        Type::Pointer(_) => true,
+                        Type::Array(inner, _) | Type::Pointer(inner) => {
+                            match *inner {
+                                // Scalar int-like elements => a[i] is a scalar value, not a pointer
+                                Type::Int | Type::UInt
+                                | Type::Long | Type::ULong
+                                | Type::Short | Type::UShort
+                                | Type::Enum(_) | Type::Named(_)
+                                | Type::Char | Type::SChar | Type::UChar => false,
+                                // Non-scalar element => treat as pointer-valued (pointer to subobject)
+                                _ => true,
+                            }
+                        }
                         _ => false,
                     }
                 } else {
@@ -803,8 +813,65 @@ impl Emitter {
 
     // Compute pointer to element for base[index] without loading; returns (ptr_str, element_type)
     fn emit_index_ptr(&mut self, base: &Expr, index: &Expr) -> (String, Type) {
-        let base_ty = self.type_of_expr(base);
-        let (bstr, _bc) = self.emit_expr(base);
+        // Fast path: if base is a plain local array identifier, use its storage pointer directly
+        if let Expr::Ident(aname) = base {
+            if let Some(Type::Array(inner, n)) = self.locals_ty.get(aname).cloned() {
+                let (istr, ic) = self.emit_expr(index);
+                let idx64 = if let Some(c) = ic {
+                    format!("{}", c as i64)
+                } else {
+                    let z = self.new_tmp();
+                    let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr);
+                    z
+                };
+                let base_ptr = self
+                    .locals
+                    .get(aname)
+                    .cloned()
+                    .unwrap_or_else(|| format!("%{}", aname));
+                match *inner.clone() {
+                    Type::Int | Type::UInt => {
+                        let ep = self.new_tmp();
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = getelementptr inbounds [{} x i32], ptr {}, i64 0, i64 {}",
+                            ep, n, base_ptr, idx64
+                        );
+                        return (ep, Type::Int);
+                    }
+                    other => {
+                        let esz = self.sizeof_t_usize(&other) as i64;
+                        let scaled = if esz == 1 {
+                            idx64
+                        } else {
+                            let m = self.new_tmp();
+                            let _ = writeln!(self.buf, "  {} = mul i64 {}, {}", m, idx64, esz);
+                            m
+                        };
+                        let ep = self.new_tmp();
+                        let _ = writeln!(
+                            self.buf,
+                            "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
+                            ep, base_ptr, scaled
+                        );
+                        return (ep, other);
+                    }
+                }
+            }
+        }
+
+        // Special-case struct/union member lvalues as base: compute address directly (avoid loads)
+        let mut base_ty = self.type_of_expr(base);
+        let bstr: String;
+        if let Expr::Member { base: b2, field, arrow } = base {
+            let (p, fty) = self.emit_member_ptr(b2, field, *arrow);
+            bstr = p;
+            base_ty = Some(fty);
+        } else {
+            let (p, _pc) = self.emit_expr(base);
+            bstr = p;
+        }
+
         let (istr, ic) = self.emit_expr(index);
         let idx64 = if let Some(c) = ic {
             format!("{}", c as i64)
@@ -813,9 +880,10 @@ impl Emitter {
             let _ = writeln!(self.buf, "  {} = zext i32 {} to i64", z, istr);
             z
         };
+
         match base_ty {
-            Some(Type::Array(inner, n)) => {
-                // If inner is array, step rows by one: gep [inner], ptr base, idx
+            Some(Type::Array(inner, _n)) => {
+                // If inner is array, step rows by one: GEP typed if possible, else byte GEP
                 match *inner.clone() {
                     Type::Array(_, _) => {
                         if let Some(inner_str) = self.llvm_int_array_type_str(&inner) {
@@ -827,7 +895,6 @@ impl Emitter {
                             );
                             (row, *inner)
                         } else {
-                            // Fallback: byte-gep
                             let elem_ptr = self.new_tmp();
                             let esz = self.sizeof_t_usize(&inner) as i64;
                             let scaled = if esz == 1 {
@@ -846,7 +913,6 @@ impl Emitter {
                         }
                     }
                     Type::Int | Type::UInt => {
-                        // 1-D array case: base usually decayed to i32*, GEP i32
                         let ep = self.new_tmp();
                         let _ = writeln!(
                             self.buf,
@@ -856,7 +922,6 @@ impl Emitter {
                         (ep, Type::Int)
                     }
                     other => {
-                        // Non-int element: byte GEP
                         let elem_ptr = self.new_tmp();
                         let esz = self.sizeof_t_usize(&other) as i64;
                         let scaled = if esz == 1 {
@@ -887,7 +952,6 @@ impl Emitter {
                             );
                             (row, *inner)
                         } else {
-                            // fallback to byte gep
                             let elem_ptr = self.new_tmp();
                             let esz = self.sizeof_t_usize(&inner) as i64;
                             let scaled = if esz == 1 {
@@ -934,7 +998,7 @@ impl Emitter {
                 }
             }
             _ => {
-                // Fallback: treat as i32*
+                // Fallback: treat as i32 elements
                 let ep = self.new_tmp();
                 let _ = writeln!(
                     self.buf,

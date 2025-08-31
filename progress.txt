@@ -388,3 +388,20 @@ Next Focus (unchanged sequence)
 - Added backend tests: crates/backend/tests/local_aggregate_init.rs (memset/memcpy/stores); all passing.
 - Verified existing array_init global tests and workspace remain green.
 
+
+[2025-08-31] Aggregate Initializers Polishing And Indexing Pointer Fix
+- Backend
+  - Implemented local aggregate initializer lowering end-to-end:
+    - Zero-fill local arrays/structs via @llvm.memset.
+    - memcpy for char arrays from string literals (copy NUL-terminated bytes).
+    - Per-element and per-field stores for int-like arrays and struct members (incl. nested array-of-int fields).
+  - Fixed expr_is_pointer for indexing: a[i] over int-like arrays is scalar (not pointer). This prevents emitting GEP with an i32 base and fixes the driver agg_init int-array sum runtime.
+  - Removed a duplicate emit_index_ptr tail that introduced a brace mismatch; cleaned up and re-verified.
+- Driver/Tests
+  - Added runtime tests (run_agg_init): int array sum, struct field sum, nested struct with array field, and char array from string — all pass.
+  - Full workspace remains green across parse, sema, backend, driver, and pp.
+- Git
+  - Changes authored as "Eve the Coding Dragon" and pushed to origin (e.g., 5bf0741 and follow-ups).
+- Next
+  - Broaden UAC coverage (signed/unsigned mixes) with tests.
+  - Driver CLI polish: -S/-c/-o, multiple inputs/linking, and common flags.
